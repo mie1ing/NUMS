@@ -107,3 +107,24 @@ def fdm2_c3p_npbc(f, h):
     df[-1] = (f[-1] - 2 * f[-2] + f[-3]) / (h ** 2)  # backward
     return df
 
+
+def pd2_2d(f, axis, h, method='centered', bc='periodic'):
+    """
+    Calculate second order partial derivative of 2D array f along axis direction.
+    parameters:
+        f: 2D array
+        axis: 0 -> ∂²/∂x²，1 -> ∂²/∂y²
+        h: grid spacing
+        method: 'centered'
+        bc: 'periodic', 'non-periodic'
+    return:
+        df: 2D array, same shape as f
+    """
+    if method == 'centered' and bc == 'periodic':
+        df = np.apply_along_axis(fdm2_c3p_pbc, axis=axis, arr=f, h=h)
+    elif method == 'centered' and bc == 'non-periodic':
+        df = np.apply_along_axis(fdm2_c3p_npbc, axis=axis, arr=f, h=h)
+    else:
+        raise ValueError(f"invalid parameters: method='{method}', bc='{bc}'")
+
+    return df
