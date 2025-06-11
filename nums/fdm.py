@@ -58,9 +58,9 @@ def fdm1_c3p_npbc(f, h):
     return df
 
 
-def pd2d(f, axis, h, method='forward', bc='periodic'):
+def pd1_2d(f, axis, h, method='forward', bc='periodic'):
     """
-    Calculate partial derivative of 2D array f along axis direction.
+    Calculate first order partial derivative of 2D array f along axis direction.
     parameters:
         f: 2D array
         axis: 0 -> ∂/∂x，1 -> ∂/∂y
@@ -85,5 +85,25 @@ def pd2d(f, axis, h, method='forward', bc='periodic'):
     else:
         raise ValueError(f"invalid parameters: method='{method}', bc='{bc}'")
         
+    return df
+
+
+def fdm2_c3p_pbc(f, h):
+    # For second order derivative.
+    # Centered, three-point stencil, second order approximation, for periodic BCs.
+    df = np.zeros_like(f)
+    df[1:-1] = (f[2:] - 2 * f[1:-1] + f[:-2]) / (h ** 2)
+    df[0] = (f[1] - 2 * f[0] + f[-1]) / (h ** 2)  # periodic BCs
+    df[-1] = (f[0] - 2 * f[-1] + f[-2]) / (h ** 2)  # periodic BCs
+    return df
+
+
+def fdm2_c3p_npbc(f, h):
+    # For second order derivative.
+    # Centered, three-point stencil, second order approximation, for non-periodic BCs.
+    df = np.zeros_like(f)
+    df[1:-1] = (f[2:] - 2 * f[1:-1] + f[:-2]) / (h ** 2)
+    df[0] = (f[2] - 2 * f[1] + f[0]) / (h ** 2)  # forward
+    df[-1] = (f[-1] - 2 * f[-2] + f[-3]) / (h ** 2)  # backward
     return df
 
