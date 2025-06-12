@@ -196,42 +196,147 @@ def apply_temperature_bc(T, T_hot=1.0, T_cold=0.0):
     T[:, -1] = T[:, -2]
 
 
-# 测试函数
-def test_operators():
-    """
-    测试算子函数的正确性
-    """
-    print("测试算子模块...")
+# 在你的 operators.py 文件末尾添加这些函数
 
-    # 创建简单网格
+def apply_velocity_bc(u, w, bc_params):
+    """
+    应用速度边界条件
+
+    Parameters:
+    -----------
+    u, w : ndarray
+        速度分量
+    bc_params : dict
+        边界条件参数
+    """
+    if bc_params['type'] == 'cavity':
+        # 方腔流边界条件
+        # 底边界：无滑移
+        u[0, :] = bc_params.get('u_bottom', 0.0)
+        w[0, :] = 0.0
+
+        # 顶边界：移动壁面
+        u[-1, :] = bc_params.get('u_top', 1.0)
+        w[-1, :] = 0.0
+
+        # 左右边界：无滑移
+        u[:, 0] = bc_params.get('u_left', 0.0)
+        u[:, -1] = bc_params.get('u_right', 0.0)
+        w[:, 0] = 0.0
+        w[:, -1] = 0.0
+
+    elif bc_params['type'] == 'channel':
+        # 槽道流边界条件
+        # 底顶壁面：无滑移
+        u[0, :] = 0.0
+        u[-1, :] = 0.0
+        w[0, :] = 0.0
+        w[-1, :] = 0.0
+
+        # 入口：给定速度分布
+        if bc_params.get('u_inlet') == 'parabolic':
+            nz = u.shape[0]
+            for j in range(nz):
+                z_norm = j / (nz - 1)
+                u[j, 0] = 4 * z_norm * (1 - z_norm)  # 抛物线剖面
+        else:
+            u[:, 0] = bc_params.get('u_inlet', 0.0)
+
+        w[:, 0] = 0.0
+
+        # 出口：零梯度（简化处理）
+        u[:, -1] = u[:, -2]
+        w[:, -1] = w[:, -2]
+
+    elif bc_params['type'] == 'periodic':
+        # 周期边界条件
+        u[0, :] = u[-2, :]
+        u[-1, :] = u[1, :]
+        u[:, 0] = u[:, -2]
+        u[:, -1] = u[:, 1]
+
+        w[0, :] = w[-2, :]
+        w[-1, :] = w[1, :]
+        w[:, 0] = w[:, -2]
+        w[:, -1] = w[:, 1]
+
+
+def apply_pressure_bc(p, bc_params=None):
+    """
+    应用压力边界条件
+    通常是齐次诺伊曼边界条件：∂p/∂n = 0
+
+    Parameters:
+    -----------
+    p : ndarray
+        压力场
+    bc_params : dict, optional
+        边界条件参数
+    """
+    # 默认：所有边界都是零梯度
+    p[0, :] = p[1, :]  # 底边界
+    p[-1, :] = p[-2, :]  # 顶边界
+    p[:, 0] = p[:, 1]  # 左边界
+    p[:, -1] = p[:, -2]  # 右边界
+
+    # 如果有特殊压力边界条件
+    if bc_params is not None:
+        if bc_params['type'] == 'channel' and 'pressure_outlet' in bc_params:
+            # 出口指定压力
+            p[:, -1] = bc_params['pressure_outlet']
+
+
+def create_test_operators():
+    """
+    测试边界条件函数
+    """
+    print("Testing boundary condition functions...")
+
     from grid import Grid2D
-    grid = Grid2D(nx=10, nz=5, Lx=2.0, Lz=1.0, staggered=True)
-    ops = FluidOperators(grid)
+    import numpy as np
 
-    # 创建测试场
-    u = grid.create_field('u_velocity')
-    w = grid.create_field('w_velocity')
-    p = grid.create_field('pressure')
+    # 创建测试网格
+    grid = Grid2D(nx=5, nz=5, Lx=1.0, Lz=1.0, staggered=False)
 
-    # 设置简单的测试值
-    u[:, :] = 1.0  # 均匀u速度
-    w[:, :] = 0.0  # 无w速度
+    # 测试速度边界条件
+    u = np.ones((6, 6))
+    w = np.ones((6, 6))
 
-    # 计算散度（应该接近0，因为u是常数）
-    div = ops.divergence(u, w)
-    print(f"散度最大值: {np.max(np.abs(div))}")
+    # 方腔流测试
+    bc_params = {
+        'type': 'cavity',
+        'u_top': 2.0,
+        'u_bottom': 0.0,
+        'u_left': 0.0,
+        'u_right': 0.0
+    }
 
-    # 设置简单压力场
-    for i in range(grid.nx + 1):
-        p[:, i] = grid.x_p[i]  # 线性压力场
+    print("Before applying velocity BC:")
+    print(f"u top: {u[-1, :]}")
+    print(f"u bottom: {u[0, :]}")
 
-    # 计算压力梯度
-    grad_x, grad_z = ops.gradient(p)
-    print(f"压力梯度x方向均值: {np.mean(grad_x)}")
-    print(f"压力梯度z方向均值: {np.mean(grad_z)}")
+    apply_velocity_bc(u, w, bc_params)
 
-    print("算子测试完成！")
+    print("After applying velocity BC:")
+    print(f"u top: {u[-1, :]}")
+    print(f"u bottom: {u[0, :]}")
+    print(f"w walls: {w[:, 0]}")
+
+    # 测试压力边界条件
+    p = np.random.random((6, 6))
+    print(f"\nBefore pressure BC:")
+    print(f"p[0, :] = {p[0, :]}")
+    print(f"p[1, :] = {p[1, :]}")
+
+    apply_pressure_bc(p)
+
+    print(f"After pressure BC:")
+    print(f"p[0, :] = {p[0, :]}")
+    print(f"p[1, :] = {p[1, :]}")
+    print(f"Equal? {np.allclose(p[0, :], p[1, :])}")
+
+    print("Boundary condition tests completed!")
 
 
 if __name__ == "__main__":
-    test_operators()
+    create_test_operators()
