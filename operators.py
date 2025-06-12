@@ -142,39 +142,55 @@ class FluidOperators:
         else:
             return u, w
 
+    def d_dx(self, f):
+        """计算x方向一阶导数"""
+        return fdm.pd1_2d(f, axis=1, h=self.dx, method='centered', bc='non-periodic')
+
+    def d_dz(self, f):
+        """计算z方向一阶导数"""
+        return fdm.pd1_2d(f, axis=0, h=self.dz, method='centered', bc='non-periodic')
+
+    def d2_dx2(self, f):
+        """计算x方向二阶导数"""
+        return fdm.pd2_2d(f, axis=1, h=self.dx, method='centered', bc='non-periodic')
+
+    def d2_dz2(self, f):
+        """计算z方向二阶导数"""
+        return fdm.pd2_2d(f, axis=0, h=self.dz, method='centered', bc='non-periodic')
+
 
 # boundary condition handling functions
-def apply_velocity_bc(u, w, grid, bc_type='no_slip'):
-    """
-    apply velocity boundary conditions
-
-    parameters:
-        u, w: velocity field
-        grid: Grid2D object
-        bc_type: boundary condition type ('no_slip', 'free_slip', 'periodic')
-    """
-    if bc_type == 'no_slip':
-        if grid.staggered:
-            # no slip boundary condition for staggered grids
-            # bottom and top boundary (z=0, z=Lz)
-            u[0, :] = 0  # bottom boundary u=0
-            u[-1, :] = 0  # top boundary u=0
-            w[0, :] = 0  # bottom boundary w=0
-            w[-1, :] = 0  # top boundary w=0
-
-            # left and right boundaty can be periodic or no slip
-            # here assume left and right are periodic, so no setting
-        else:
-            # boundary condition for non-staggered grids
-            u[0, :] = 0  # bottom boundary
-            u[-1, :] = 0  # top boundary
-            u[:, 0] = 0  # left boundary
-            u[:, -1] = 0  # right boundary
-
-            w[0, :] = 0  # bottom boundary
-            w[-1, :] = 0  # top boundary
-            w[:, 0] = 0  # left boundary
-            w[:, -1] = 0  # right boundary
+# def apply_velocity_bc(u, w, grid, bc_type='no_slip'):
+#     """
+#     apply velocity boundary conditions
+#
+#     parameters:
+#         u, w: velocity field
+#         grid: Grid2D object
+#         bc_type: boundary condition type ('no_slip', 'free_slip', 'periodic')
+#     """
+#     if bc_type == 'no_slip':
+#         if grid.staggered:
+#             # no slip boundary condition for staggered grids
+#             # bottom and top boundary (z=0, z=Lz)
+#             u[0, :] = 0  # bottom boundary u=0
+#             u[-1, :] = 0  # top boundary u=0
+#             w[0, :] = 0  # bottom boundary w=0
+#             w[-1, :] = 0  # top boundary w=0
+#
+#             # left and right boundaty can be periodic or no slip
+#             # here assume left and right are periodic, so no setting
+#         else:
+#             # boundary condition for non-staggered grids
+#             u[0, :] = 0  # bottom boundary
+#             u[-1, :] = 0  # top boundary
+#             u[:, 0] = 0  # left boundary
+#             u[:, -1] = 0  # right boundary
+#
+#             w[0, :] = 0  # bottom boundary
+#             w[-1, :] = 0  # top boundary
+#             w[:, 0] = 0  # left boundary
+#             w[:, -1] = 0  # right boundary
 
 
 def apply_temperature_bc(T, T_hot=1.0, T_cold=0.0):
@@ -195,8 +211,6 @@ def apply_temperature_bc(T, T_hot=1.0, T_cold=0.0):
     T[:, 0] = T[:, 1]
     T[:, -1] = T[:, -2]
 
-
-# 在你的 operators.py 文件末尾添加这些函数
 
 def apply_velocity_bc(u, w, bc_params):
     """
