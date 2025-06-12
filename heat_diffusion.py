@@ -32,7 +32,7 @@ class HeatDiffusionSolver:
 
     def diffusion_rhs(self, T_flat, t):
         """
-        right hand side of the heat diffusion equation: dT/dt = κ∇²T
+        right-hand side of the heat diffusion equation: dT/dt = κ∇²T
 
         parameters:
             T_flat: flattened temperature field (1D array)
@@ -133,7 +133,7 @@ def create_initial_condition(grid, condition_type='linear'):
     """
     x_p, z_p = grid.get_pressure_grid()
 
-    # create array with correct shape (nz+1, nx+1)
+    # create an array with correct shape (nz+1, nx+1)
     T_init = np.zeros((grid.nz + 1, grid.nx + 1))
 
     if condition_type == 'linear':
@@ -190,7 +190,7 @@ def plot_temperature_evolution(T_history, t_array, grid, save_path=None):
             ax = axes[i]
             T = T_history[idx]  # Shape: (nz+1, nx+1)
 
-            # create grid for plotting
+            # create a grid for plotting
             X_plot, Z_plot = np.meshgrid(x_p, z_p)
 
             im = ax.contourf(X_plot, Z_plot, T, levels=20, cmap='RdBu_r')
@@ -249,7 +249,7 @@ def verify_against_analytical_corrected():
     """
     print("Corrected analytical solution verification...")
 
-    # Test case 1: homogeneous boundary conditions + sine initial condition
+    # Test case 1: homogeneous boundary conditions and sine initial condition
     print("\nTest case 1: homogeneous boundary conditions")
     print("-" * 40)
 
@@ -321,7 +321,7 @@ def verify_against_analytical_corrected():
 
     homogeneous_test = max_error < 0.01
 
-    # Test case 2: non-homogeneous boundary conditions + perturbation initial condition
+    # Test case 2: non-homogeneous boundary conditions and perturbation initial condition
     print("\nTest case 2: non-homogeneous boundary conditions + perturbation")
     print("-" * 40)
 
@@ -426,14 +426,14 @@ def simple_test_corrected():
     # create initial condition with perturbation
     T_init = create_initial_condition(grid, 'gaussian')
 
-    # run to 3τ time, should mostly reach steady state
+    # run to 3τ time, should mostly reach a steady state
     dt = 0.001
     nt = int(3 * tau_diffusion / dt)
     print(f"Running to t = 3τ = {3 * tau_diffusion}, requires {nt} steps")
 
-    # if too many steps, reduce to reasonable range
+    # if too many steps, reduce to a reasonable range
     if nt > 30000:
-        nt = 10000
+        nt = 30000
         dt = 3 * tau_diffusion / nt
         print(f"Adjusted parameters: dt = {dt:.6f}, nt = {nt}")
 
