@@ -214,56 +214,55 @@ def apply_temperature_bc(T, T_hot=1.0, T_cold=0.0):
 
 def apply_velocity_bc(u, w, bc_params):
     """
-    应用速度边界条件
+    apply velocity boundary conditions
 
     Parameters:
-    -----------
-    u, w : ndarray
-        速度分量
-    bc_params : dict
-        边界条件参数
+        u, w : ndarray
+            velocity components
+        bc_params : dict
+            boundary condition parameters
     """
     if bc_params['type'] == 'cavity':
-        # 方腔流边界条件
-        # 底边界：无滑移
+        # cavity boundary condition
+        # bottom boundary: no slip
         u[0, :] = bc_params.get('u_bottom', 0.0)
         w[0, :] = 0.0
 
-        # 顶边界：移动壁面
+        # top boundary: move walls
         u[-1, :] = bc_params.get('u_top', 1.0)
         w[-1, :] = 0.0
 
-        # 左右边界：无滑移
+        # left and right boundary: no slip
         u[:, 0] = bc_params.get('u_left', 0.0)
         u[:, -1] = bc_params.get('u_right', 0.0)
         w[:, 0] = 0.0
         w[:, -1] = 0.0
 
     elif bc_params['type'] == 'channel':
-        # 槽道流边界条件
-        # 底顶壁面：无滑移
+        # channel boundary condition
+        # bottom and top boundary: no slip
         u[0, :] = 0.0
         u[-1, :] = 0.0
         w[0, :] = 0.0
         w[-1, :] = 0.0
 
-        # 入口：给定速度分布
+        # inlet: given velocity distribution
         if bc_params.get('u_inlet') == 'parabolic':
             nz = u.shape[0]
             for j in range(nz):
                 z_norm = j / (nz - 1)
-                u[j, 0] = 4 * z_norm * (1 - z_norm)  # 抛物线剖面
+                u[j, 0] = 4 * z_norm * (1 - z_norm)  # parabolic profile
         else:
             u[:, 0] = bc_params.get('u_inlet', 0.0)
 
         w[:, 0] = 0.0
 
-        # 出口：零梯度（简化处理）
+        # outslet: zero gradient (simplified processing)
         u[:, -1] = u[:, -2]
         w[:, -1] = w[:, -2]
 
     elif bc_params['type'] == 'periodic':
-        # 周期边界条件
+        # periodic boundary condition
         u[0, :] = u[-2, :]
         u[-1, :] = u[1, :]
         u[:, 0] = u[:, -2]
@@ -277,26 +276,25 @@ def apply_velocity_bc(u, w, bc_params):
 
 def apply_pressure_bc(p, bc_params=None):
     """
-    应用压力边界条件
-    通常是齐次诺伊曼边界条件：∂p/∂n = 0
+    apply pressure boundary conditions
+    normally, homogeneous Neumann boundary condition: ∂p/∂n = 0
 
     Parameters:
-    -----------
-    p : ndarray
-        压力场
-    bc_params : dict, optional
-        边界条件参数
+        p : ndarray
+            pressure field
+        bc_params : dict, optional
+            boundary condition parameters
     """
-    # 默认：所有边界都是零梯度
-    p[0, :] = p[1, :]  # 底边界
-    p[-1, :] = p[-2, :]  # 顶边界
-    p[:, 0] = p[:, 1]  # 左边界
-    p[:, -1] = p[:, -2]  # 右边界
+    # default: all boundaries are zero gradient
+    p[0, :] = p[1, :]  # bottom boundary
+    p[-1, :] = p[-2, :]  # top boundary
+    p[:, 0] = p[:, 1]  # left boundary
+    p[:, -1] = p[:, -2]  # right boundary
 
-    # 如果有特殊压力边界条件
+    # if there is special pressure boundary condition
     if bc_params is not None:
         if bc_params['type'] == 'channel' and 'pressure_outlet' in bc_params:
-            # 出口指定压力
+            # outslet specified pressure
             p[:, -1] = bc_params['pressure_outlet']
 
 
