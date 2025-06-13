@@ -225,18 +225,19 @@ def apply_velocity_bc(u, w, bc_params):
     if bc_params['type'] == 'cavity':
         # cavity boundary condition
         # bottom boundary: no slip
-        u[0, :] = bc_params.get('u_bottom', 0.0)
-        w[0, :] = 0.0
-
-        # top boundary: move walls
-        u[-1, :] = bc_params.get('u_top', 1.0)
-        w[-1, :] = 0.0
 
         # left and right boundary: no slip
         u[:, 0] = bc_params.get('u_left', 0.0)
         u[:, -1] = bc_params.get('u_right', 0.0)
         w[:, 0] = 0.0
         w[:, -1] = 0.0
+
+        u[0, :] = bc_params.get('u_bottom', 0.0)
+        w[0, :] = 0.0
+
+        # top boundary: move walls
+        u[-1, :] = bc_params.get('u_top', 1.0)
+        w[-1, :] = 0.0
 
     elif bc_params['type'] == 'channel':
         # channel boundary condition
