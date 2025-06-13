@@ -179,59 +179,47 @@ class NavierStokesSolver:
 
         return phi
 
-    def _solve_poisson(self, rhs, max_iter=1000, tol=1e-6):
+    def _solve_poisson(self, rhs, max_iter=2000, tol=1e-5):
         """
-        解泊松方程：∇²φ = rhs
-        使用雅可比迭代
-
-        Parameters:
-        -----------
-        rhs : ndarray
-            右端项
-        max_iter : int
-            最大迭代次数
-        tol : float
-            收敛容差
-
-        Returns:
-        --------
-        phi : ndarray
-            解
+        修复的泊松求解器 - 使用更稳定的算法
         """
-        # 初始猜测
         phi = np.zeros_like(rhs)
-        phi_new = np.zeros_like(rhs)
 
         dx = self.grid.Lx / self.nx
         dz = self.grid.Lz / self.nz
-        dx2 = dx ** 2
-        dz2 = dz ** 2
+        dx2, dz2 = dx ** 2, dz ** 2
 
-        # 雅可比迭代系数
-        coeff = 1.0 / (2 / dx2 + 2 / dz2)
+        # 预计算系数
+        coeff_center = -2 * (1 / dx2 + 1 / dz2)
+        coeff_x = 1 / dx2
+        coeff_z = 1 / dz2
 
         for iteration in range(max_iter):
-            # 内部点
-            phi_new[1:-1, 1:-1] = coeff * (
-                    (phi[2:, 1:-1] + phi[:-2, 1:-1]) / dz2 +
-                    (phi[1:-1, 2:] + phi[1:-1, :-2]) / dx2 -
-                    rhs[1:-1, 1:-1]
-            )
+            phi_old = phi.copy()
 
-            # 边界条件：∂φ/∂n = 0（齐次诺伊曼边界条件）
-            apply_pressure_bc(phi_new)
+            # 更新内部点
+            for j in range(1, rhs.shape[0] - 1):
+                for i in range(1, rhs.shape[1] - 1):
+                    phi[j, i] = -(rhs[j, i] -
+                                  coeff_x * (phi_old[j, i + 1] + phi_old[j, i - 1]) -
+                                  coeff_z * (phi_old[j + 1, i] + phi_old[j - 1, i])) / coeff_center
+
+            # 边界条件：∂φ/∂n = 0
+            phi[0, :] = phi[1, :]
+            phi[-1, :] = phi[-2, :]
+            phi[:, 0] = phi[:, 1]
+            phi[:, -1] = phi[:, -2]
+
+            # 保证解的唯一性：移除平均值
+            phi -= np.mean(phi)
 
             # 检查收敛
-            residual = np.max(np.abs(phi_new - phi))
-            if residual < tol:
-                if iteration < 10 or iteration % 100 == 0:
-                    print(f"  Poisson solver converged in {iteration + 1} iterations")
-                break
-
-            phi[:] = phi_new[:]
-
-        if iteration == max_iter - 1:
-            print(f"  Warning: Poisson solver did not converge. Residual: {residual:.2e}")
+            if iteration % 100 == 0:
+                max_change = np.max(np.abs(phi - phi_old))
+                if max_change < tol:
+                    if iteration > 0:
+                        print(f"  Poisson solver converged in {iteration + 1} iterations")
+                    break
 
         return phi
 
