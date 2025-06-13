@@ -1,168 +1,263 @@
 import numpy as np
 from grid import Grid2D
+from operators import FluidOperators, apply_velocity_bc, apply_pressure_bc
 
 
-def check_current_bc_function():
+def create_enhanced_projection_solver():
     """
-    检查当前operators.py中的边界条件函数
+    创建增强的投影方法求解器
     """
-    print("=" * 60)
-    print("检查当前边界条件函数的行为")
-    print("=" * 60)
 
-    # 导入当前的函数
-    from operators import apply_velocity_bc
-
-    # 创建测试
-    grid = Grid2D(nx=4, nz=4, Lx=1.0, Lz=1.0, staggered=False)
-    u = np.zeros((grid.nz + 1, grid.nx + 1))
-    w = np.zeros((grid.nz + 1, grid.nx + 1))
-
-    bc_params = {
-        'type': 'cavity',
-        'u_top': 0.1,
-        'u_bottom': 0.0,
-        'u_left': 0.0,
-        'u_right': 0.0,
-    }
-
-    print("调用apply_velocity_bc前:")
-    print(f"  u形状: {u.shape}")
-    print(f"  u顶部行: {u[-1, :]}")
-
-    # 调用函数
-    apply_velocity_bc(u, w, bc_params)
-
-    print("调用apply_velocity_bc后:")
-    print(f"  u顶部行: {u[-1, :]}")
-
-    # 分析问题
-    if u[-1, 0] == 0.0 and u[-1, -1] == 0.0:
-        print("❌ 问题确认：角点被设为0，中间设为u_top")
-        print("这正是散度源的原因！")
-        return False
-    else:
-        print("✅ 边界条件看起来正确")
-        return True
-
-
-def create_simple_fix():
+    enhanced_solver_code = '''
+class EnhancedProjectionSolver(StableNavierStokesSolver):
     """
-    创建一个简单直接的修复方案
+    增强的投影方法求解器 - 解决散度累积问题
     """
-    print("\n" + "=" * 60)
-    print("创建简单修复方案")
-    print("=" * 60)
 
-    print("问题：当前边界条件函数在角点创建阶跃")
-    print("解决：直接修改operators.py文件")
+    def time_step_enhanced_projection(self, u, w, p, dt, bc_params=None):
+        """
+        增强的投影方法时间步进
+        """
+        # 检查输入
+        if np.any(~np.isfinite(u)) or np.any(~np.isfinite(w)):
+            return u * 0, w * 0, p * 0
 
-    # 显示需要替换的代码
-    print("\n在operators.py中找到apply_velocity_bc函数，替换为：")
+        # 🔑 关键修改1：更严格的散度控制
+        # 在每个时间步开始时强制散度为零
+        div_initial = self.operators.d_dx(u) + self.operators.d_dz(w)
+        if np.max(np.abs(div_initial)) > 1e-10:
+            print(f"    Initial reprojection: div={np.max(np.abs(div_initial)):.2e}")
+            phi_init = self._solve_poisson_stable(div_initial, tol=1e-8)
+            dphi_dx = self.operators.d_dx(phi_init)
+            dphi_dz = self.operators.d_dz(phi_init)
+            u = u - dphi_dx
+            w = w - dphi_dz
+            p = p + phi_init
 
-    fix_code = '''
-def apply_velocity_bc(u, w, bc_params):
-    """
-    应用速度边界条件
-    """
-    if bc_params is None:
-        return
+        # 动态时间步长控制
+        u_max = np.max(np.sqrt(u**2 + w**2))
+        if u_max > 0:
+            dt_cfl = 0.3 * min(self.grid.dx, self.grid.dz) / u_max  # 更保守
+            dt = min(dt, dt_cfl)
 
-    bc_type = bc_params.get('type', 'cavity')
+        # 🔑 关键修改2：分步投影方法
+        # 步骤1：半步动量预测（不含压力梯度）
+        viscous_u = self.nu * self.operators.laplacian(u)
+        viscous_w = self.nu * self.operators.laplacian(w)
+        Nu, Nw = self.compute_nonlinear_term_stable(u, w)
 
-    if bc_type == 'cavity':
-        # 🔑 关键修复：整个边界统一设置
+        alpha = 0.3  # 更保守的系数
+        u_half = u + 0.5 * alpha * dt * (viscous_u - Nu)
+        w_half = w + 0.5 * alpha * dt * (viscous_w - Nw)
 
-        # 顶部边界 - 整个边界包括角点都设为u_top
-        u_top = bc_params.get('u_top', 1.0)
-        u[-1, :] = u_top  # 整行都是u_top
-        w[-1, :] = 0.0
+        # 应用边界条件到半步速度
+        if bc_params is not None:
+            apply_velocity_bc(u_half, w_half, bc_params)
 
-        # 底部边界
-        u_bottom = bc_params.get('u_bottom', 0.0)
-        u[0, :] = u_bottom
-        w[0, :] = 0.0
+        # 🔑 关键修改3：中间投影
+        div_half = self.operators.d_dx(u_half) + self.operators.d_dz(w_half)
+        if np.max(np.abs(div_half)) > 1e-10:
+            phi_half = self._solve_poisson_stable(div_half / (0.5 * dt), tol=1e-8)
+            dphi_dx = self.operators.d_dx(phi_half)
+            dphi_dz = self.operators.d_dz(phi_half)
+            u_half = u_half - 0.5 * dt * dphi_dx
+            w_half = w_half - 0.5 * dt * dphi_dz
 
-        # 左边界
-        u_left = bc_params.get('u_left', 0.0)
-        u[:, 0] = u_left
-        w[:, 0] = 0.0
+        # 步骤2：完整步动量预测
+        dp_dx = self.operators.d_dx(p)
+        dp_dz = self.operators.d_dz(p)
 
-        # 右边界
-        u_right = bc_params.get('u_right', 0.0)
-        u[:, -1] = u_right
-        w[:, -1] = 0.0
+        u_star = u + alpha * dt * (-dp_dx/self.rho + viscous_u - Nu)
+        w_star = w + alpha * dt * (-dp_dz/self.rho + viscous_w - Nw)
 
-    elif bc_type == 'periodic':
-        # 周期边界条件
-        u[0, :] = u[-2, :]
-        u[-1, :] = u[1, :]
-        u[:, 0] = u[:, -2]
-        u[:, -1] = u[:, 1]
+        # 应用边界条件
+        if bc_params is not None:
+            apply_velocity_bc(u_star, w_star, bc_params)
 
-        w[0, :] = w[-2, :]
-        w[-1, :] = w[1, :]
-        w[:, 0] = w[:, -2]
-        w[:, -1] = w[:, 1]
+        # 🔑 关键修改4：最终投影（更严格）
+        div_star = self.operators.d_dx(u_star) + self.operators.d_dz(w_star)
+        rhs = div_star / dt
 
-    elif bc_type == 'channel':
-        # 槽道流边界条件
-        if 'u_inlet' in bc_params:
-            if bc_params['u_inlet'] == 'parabolic':
-                # 抛物线入口速度分布
-                z_coords = np.linspace(0, 1, u.shape[0])
-                for j in range(u.shape[0]):
-                    z_norm = z_coords[j]
-                    u[j, 0] = 4 * z_norm * (1 - z_norm)
-            else:
-                u[:, 0] = bc_params['u_inlet']
+        phi = self._solve_poisson_stable(rhs, tol=1e-8, max_iter=10000)
 
-        # 壁面无滑移
-        u[0, :] = bc_params.get('u_walls', 0.0)
-        u[-1, :] = bc_params.get('u_walls', 0.0)
-        w[:, :] = bc_params.get('w_walls', 0.0)
+        # 速度校正
+        dphi_dx = self.operators.d_dx(phi)
+        dphi_dz = self.operators.d_dz(phi)
+
+        u_new = u_star - dt * dphi_dx
+        w_new = w_star - dt * dphi_dz
+
+        # 🔑 关键修改5：后处理散度检查
+        div_final = self.operators.d_dx(u_new) + self.operators.d_dz(w_new)
+        max_div_final = np.max(np.abs(div_final))
+
+        if max_div_final > 1e-6:  # 如果散度仍然太大
+            print(f"    Post-correction needed: div={max_div_final:.2e}")
+            phi_final = self._solve_poisson_stable(div_final, tol=1e-10)
+            dphi_dx_final = self.operators.d_dx(phi_final)
+            dphi_dz_final = self.operators.d_dz(phi_final)
+            u_new = u_new - dphi_dx_final
+            w_new = w_new - dphi_dz_final
+            phi = phi + phi_final
+
+        # 压力更新
+        p_new = p + phi
+
+        # 最终边界条件
+        if bc_params is not None:
+            apply_pressure_bc(p_new, bc_params)
+
+        return u_new, w_new, p_new
+
+    def _solve_poisson_stable(self, rhs, max_iter=10000, tol=1e-8):
+        """
+        超高精度泊松求解器
+        """
+        phi = np.zeros_like(rhs)
+        dx = self.grid.Lx / self.nx
+        dz = self.grid.Lz / self.nz
+
+        # 确保兼容性
+        rhs_mean = np.mean(rhs)
+        rhs = rhs - rhs_mean
+
+        # 🔑 使用更优化的SOR参数
+        omega = 1.95  # 接近最优
+
+        for iteration in range(max_iter):
+            phi_old = phi.copy()
+
+            # Red-Black Gauss-Seidel（更稳定）
+            # Red points
+            for j in range(1, rhs.shape[0] - 1):
+                for i in range(1, rhs.shape[1] - 1):
+                    if (i + j) % 2 == 0:  # Red points
+                        phi_new_val = 0.25 * (
+                            phi[j + 1, i] + phi[j - 1, i] +
+                            phi[j, i + 1] + phi[j, i - 1] -
+                            dx ** 2 * rhs[j, i]
+                        )
+                        phi[j, i] = (1 - omega) * phi[j, i] + omega * phi_new_val
+
+            # Black points
+            for j in range(1, rhs.shape[0] - 1):
+                for i in range(1, rhs.shape[1] - 1):
+                    if (i + j) % 2 == 1:  # Black points
+                        phi_new_val = 0.25 * (
+                            phi[j + 1, i] + phi[j - 1, i] +
+                            phi[j, i + 1] + phi[j, i - 1] -
+                            dx ** 2 * rhs[j, i]
+                        )
+                        phi[j, i] = (1 - omega) * phi[j, i] + omega * phi_new_val
+
+            # 边界条件
+            phi[0, :] = phi[1, :]
+            phi[-1, :] = phi[-2, :]
+            phi[:, 0] = phi[:, 1]
+            phi[:, -1] = phi[:, -2]
+
+            # 移除平均值
+            phi -= np.mean(phi)
+
+            # 检查收敛
+            if iteration % 100 == 0:
+                residual = 0
+                for j in range(1, rhs.shape[0] - 1):
+                    for i in range(1, rhs.shape[1] - 1):
+                        laplacian = (phi[j + 1, i] - 2 * phi[j, i] + phi[j - 1, i]) / dz ** 2 + \\
+                                    (phi[j, i + 1] - 2 * phi[j, i] + phi[j, i - 1]) / dx ** 2
+                        residual = max(residual, abs(laplacian - rhs[j, i]))
+
+                if residual < tol:
+                    if iteration > 0:
+                        print(f"    Enhanced Poisson converged in {iteration + 1} iter (residual: {residual:.2e})")
+                    break
+
+        return phi
 '''
 
-    print(fix_code)
+    print("=" * 60)
+    print("增强投影方法求解器代码")
+    print("=" * 60)
+    print(enhanced_solver_code)
 
 
-def test_manual_fix():
+def test_enhanced_projection():
     """
-    手动测试修复效果
+    测试增强投影方法
     """
     print("\n" + "=" * 60)
-    print("手动测试修复效果")
+    print("测试增强投影方法")
     print("=" * 60)
 
-    def apply_velocity_bc_manual_fix(u, w, bc_params):
-        """手动修复的边界条件函数"""
-        if bc_params is None:
-            return
+    from stable_navier_stokes import StableNavierStokesSolver
 
-        bc_type = bc_params.get('type', 'cavity')
+    # 手动实现增强投影方法
+    class TestEnhancedSolver(StableNavierStokesSolver):
+        def time_step_enhanced(self, u, w, p, dt, bc_params=None):
+            """简化的增强投影测试"""
 
-        if bc_type == 'cavity':
-            # 整个边界统一设置
-            u_top = bc_params.get('u_top', 1.0)
-            u[-1, :] = u_top  # 整行都是u_top，包括角点
-            w[-1, :] = 0.0
+            # 更严格的初始投影
+            div_initial = self.operators.d_dx(u) + self.operators.d_dz(w)
+            if np.max(np.abs(div_initial)) > 1e-12:
+                phi_init = self._solve_poisson_enhanced(div_initial)
+                dphi_dx = self.operators.d_dx(phi_init)
+                dphi_dz = self.operators.d_dz(phi_init)
+                u = u - dphi_dx
+                w = w - dphi_dz
+                p = p + phi_init
 
-            u_bottom = bc_params.get('u_bottom', 0.0)
-            u[0, :] = u_bottom
-            w[0, :] = 0.0
+            # 标准投影步骤但参数更保守
+            dp_dx = self.operators.d_dx(p)
+            dp_dz = self.operators.d_dz(p)
+            viscous_u = self.nu * self.operators.laplacian(u)
+            viscous_w = self.nu * self.operators.laplacian(w)
+            Nu, Nw = self.compute_nonlinear_term_stable(u, w)
 
-            u_left = bc_params.get('u_left', 0.0)
-            u[:, 0] = u_left
-            w[:, 0] = 0.0
+            alpha = 0.1  # 非常保守
+            u_star = u + alpha * dt * (-dp_dx / self.rho + viscous_u - Nu)
+            w_star = w + alpha * dt * (-dp_dz / self.rho + viscous_w - Nw)
 
-            u_right = bc_params.get('u_right', 0.0)
-            u[:, -1] = u_right
-            w[:, -1] = 0.0
+            if bc_params is not None:
+                apply_velocity_bc(u_star, w_star, bc_params)
+
+            # 高精度投影
+            div_star = self.operators.d_dx(u_star) + self.operators.d_dz(w_star)
+            rhs = div_star / dt
+            phi = self._solve_poisson_enhanced(rhs)
+
+            dphi_dx = self.operators.d_dx(phi)
+            dphi_dz = self.operators.d_dz(phi)
+            u_new = u_star - dt * dphi_dx
+            w_new = w_star - dt * dphi_dz
+
+            # 后处理检查
+            div_final = self.operators.d_dx(u_new) + self.operators.d_dz(w_new)
+            if np.max(np.abs(div_final)) > 1e-8:
+                phi_correct = self._solve_poisson_enhanced(div_final)
+                dphi_dx_correct = self.operators.d_dx(phi_correct)
+                dphi_dz_correct = self.operators.d_dz(phi_correct)
+                u_new = u_new - dphi_dx_correct
+                w_new = w_new - dphi_dz_correct
+                phi = phi + phi_correct
+
+            p_new = p + phi
+            if bc_params is not None:
+                apply_pressure_bc(p_new, bc_params)
+
+            return u_new, w_new, p_new
+
+        def _solve_poisson_enhanced(self, rhs):
+            """增强泊松求解器"""
+            return self._solve_poisson_stable(rhs, max_iter=20000, tol=1e-10)
 
     # 测试
-    grid = Grid2D(nx=4, nz=4, Lx=1.0, Lz=1.0, staggered=False)
+    grid = Grid2D(nx=16, nz=16, Lx=1.0, Lz=1.0, staggered=False)
+    solver = TestEnhancedSolver(grid, nu=0.01, rho=1.0)
+
     u = np.zeros((grid.nz + 1, grid.nx + 1))
     w = np.zeros((grid.nz + 1, grid.nx + 1))
+    p = np.zeros((grid.nz + 1, grid.nx + 1))
 
     bc_params = {
         'type': 'cavity',
@@ -172,85 +267,87 @@ def test_manual_fix():
         'u_right': 0.0,
     }
 
-    print("修复前（当前operators.py）:")
-    from operators import apply_velocity_bc
-    apply_velocity_bc(u, w, bc_params)
-    print(f"  u顶部: {u[-1, :]}")
+    dt = 0.01  # 更小的时间步
 
-    # 重置
-    u.fill(0)
-    w.fill(0)
+    print("增强投影方法测试（10步）:")
 
-    print("修复后（手动修复）:")
-    apply_velocity_bc_manual_fix(u, w, bc_params)
-    print(f"  u顶部: {u[-1, :]}")
+    divergences = []
+    for step in range(10):
+        u, w, p = solver.time_step_enhanced(u, w, p, dt, bc_params)
 
-    # 检查散度
-    from operators import FluidOperators
-    operators = FluidOperators(grid)
-    div = operators.d_dx(u) + operators.d_dz(w)
-    print(f"  最大散度: {np.max(np.abs(div)):.6f}")
+        div_u = solver.operators.d_dx(u) + solver.operators.d_dz(w)
+        max_div = np.max(np.abs(div_u))
+        divergences.append(max_div)
 
-    # 成功标准
-    all_same = np.all(u[-1, :] == 0.1)  # 所有顶部点都应该是0.1
-    low_div = np.max(np.abs(div)) < 0.1
+        print(f"  步骤 {step + 1}: 散度={max_div:.8f}")
 
-    print(f"  所有顶部点都是u_top: {'✅' if all_same else '❌'}")
-    print(f"  散度足够小: {'✅' if low_div else '❌'}")
+        if max_div > 0.01:
+            print(f"    散度过大，停止测试")
+            break
 
-    return all_same and low_div
+    max_final_div = max(divergences) if divergences else float('inf')
+    success = max_final_div < 0.001
+
+    print(f"\n增强投影结果:")
+    print(f"  最大散度: {max_final_div:.8f}")
+    print(f"  成功: {'✅' if success else '❌'}")
+
+    return success
 
 
-def provide_final_instructions():
+def provide_alternative_approaches():
     """
-    提供最终指导
+    提供替代方法
     """
     print("\n" + "=" * 60)
-    print("最终修复指导")
+    print("替代方法建议")
     print("=" * 60)
 
-    print("基于测试结果，问题确实在operators.py的apply_velocity_bc函数")
-    print("当前函数在角点设置u=0，这产生了阶跃不连续")
+    alternatives = '''
+如果增强投影仍然不够，考虑以下替代方法：
 
-    print("\n立即修复步骤：")
-    print("1. 打开operators.py文件")
-    print("2. 找到apply_velocity_bc函数")
-    print("3. 确保 'cavity' 分支中的边界设置是：")
-    print("   u[-1, :] = u_top  # 整行，不要在角点特殊处理")
-    print("   u[0, :] = u_bottom")
-    print("   u[:, 0] = u_left")
-    print("   u[:, -1] = u_right")
+1. **使用真正的交错网格**
+   - 实现MAC (Marker-and-Cell) 方法
+   - 在速度定义点自然满足散度自由条件
 
-    print("\n4. 保存文件后运行：")
-    print("   python stable_navier_stokes.py")
+2. **使用不可压缩专用方法**
+   - SIMPLE/PISO算法
+   - 分离式压力-速度耦合
 
-    print("\n预期结果：")
-    print("   - 散度从1.6降到接近0.0")
-    print("   - 投影方法开始正常工作")
+3. **降低雷诺数**
+   - 增加粘性系数 nu = 0.1 (而不是0.01)
+   - 使问题更稳定
+
+4. **使用隐式时间积分**
+   - Crank-Nicolson方法
+   - 后向欧拉法
+
+5. **问题简化**
+   - 先测试更简单的情况（如 u_top = 0.001）
+   - 确保方法在简单情况下工作
+'''
+
+    print(alternatives)
 
 
 if __name__ == "__main__":
-    # 检查当前函数
-    current_ok = check_current_bc_function()
+    # 提供增强投影代码
+    create_enhanced_projection_solver()
 
-    # 创建修复方案
-    create_simple_fix()
+    # 测试增强投影
+    success = test_enhanced_projection()
 
-    # 手动测试修复
-    manual_ok = test_manual_fix()
-
-    # 最终指导
-    provide_final_instructions()
+    # 提供替代方法
+    provide_alternative_approaches()
 
     print(f"\n" + "=" * 60)
-    print("诊断结果")
+    print("根本性修复总结")
     print("=" * 60)
-    print(f"当前BC函数正确: {'✅' if current_ok else '❌'}")
-    print(f"手动修复有效: {'✅' if manual_ok else '❌'}")
+    print(f"增强投影测试: {'✅ 成功' if success else '❌ 失败'}")
 
-    if not current_ok and manual_ok:
-        print("\n🎯 确认问题在operators.py文件！请按上述步骤修复。")
-    elif current_ok:
-        print("\n🤔 奇怪，边界条件函数看起来是正确的，问题可能在别处...")
-    else:
-        print("\n❌ 需要进一步调试...")
+    if not success:
+        print("\n🤔 可能需要考虑:")
+        print("1. 这是方腔流的已知数值难题")
+        print("2. 可能需要专用的不可压缩流求解器")
+        print("3. 考虑使用商业CFD软件验证结果")
+        print("4. 先在更简单的问题上验证方法")
