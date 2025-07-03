@@ -1,353 +1,282 @@
+"""
+简化的Boussinesq测试 - 验证基础功能
+"""
 import numpy as np
+import matplotlib.pyplot as plt
 from grid import Grid2D
-from operators import FluidOperators, apply_velocity_bc, apply_pressure_bc
+from operators import FluidOperators
 
 
-def create_enhanced_projection_solver():
-    """
-    创建增强的投影方法求解器
-    """
+def simple_rayleigh_benard_test():
+    """简单的Rayleigh-Bénard测试"""
+    print("开始简单的Rayleigh-Bénard对流测试...")
 
-    enhanced_solver_code = '''
-class EnhancedProjectionSolver(StableNavierStokesSolver):
-    """
-    增强的投影方法求解器 - 解决散度累积问题
-    """
+    # 创建小网格进行快速测试
+    grid = Grid2D(nx=16, nz=8, Lx=2.0, Lz=1.0, staggered=False)
+    operators = FluidOperators(grid)
 
-    def time_step_enhanced_projection(self, u, w, p, dt, bc_params=None):
-        """
-        增强的投影方法时间步进
-        """
-        # 检查输入
-        if np.any(~np.isfinite(u)) or np.any(~np.isfinite(w)):
-            return u * 0, w * 0, p * 0
+    print(f"网格大小: {grid.nx}×{grid.nz}")
+    print(f"网格间距: dx={grid.dx:.3f}, dz={grid.dz:.3f}")
 
-        # 🔑 关键修改1：更严格的散度控制
-        # 在每个时间步开始时强制散度为零
-        div_initial = self.operators.d_dx(u) + self.operators.d_dz(w)
-        if np.max(np.abs(div_initial)) > 1e-10:
-            print(f"    Initial reprojection: div={np.max(np.abs(div_initial)):.2e}")
-            phi_init = self._solve_poisson_stable(div_initial, tol=1e-8)
-            dphi_dx = self.operators.d_dx(phi_init)
-            dphi_dz = self.operators.d_dz(phi_init)
-            u = u - dphi_dx
-            w = w - dphi_dz
-            p = p + phi_init
+    # 创建简单的初始条件
+    u = np.zeros((grid.nz + 1, grid.nx + 1))
+    w = np.zeros((grid.nz + 1, grid.nx + 1))
+    T = np.zeros((grid.nz + 1, grid.nx + 1))
 
-        # 动态时间步长控制
-        u_max = np.max(np.sqrt(u**2 + w**2))
-        if u_max > 0:
-            dt_cfl = 0.3 * min(self.grid.dx, self.grid.dz) / u_max  # 更保守
-            dt = min(dt, dt_cfl)
+    # 设置温度剖面：底部热，顶部冷
+    x_p, z_p = grid.get_pressure_grid()
 
-        # 🔑 关键修改2：分步投影方法
-        # 步骤1：半步动量预测（不含压力梯度）
-        viscous_u = self.nu * self.operators.laplacian(u)
-        viscous_w = self.nu * self.operators.laplacian(w)
-        Nu, Nw = self.compute_nonlinear_term_stable(u, w)
+    for j in range(grid.nz + 1):
+        # 线性温度剖面
+        T[j, :] = 1.0 - z_p[j] / grid.Lz  # 从1.0到0.0
 
-        alpha = 0.3  # 更保守的系数
-        u_half = u + 0.5 * alpha * dt * (viscous_u - Nu)
-        w_half = w + 0.5 * alpha * dt * (viscous_w - Nw)
+        # 添加小扰动
+        for i in range(grid.nx + 1):
+            perturbation = 0.01 * np.sin(2 * np.pi * x_p[i] / grid.Lx) * \
+                           np.sin(np.pi * z_p[j] / grid.Lz)
+            T[j, i] += perturbation
 
-        # 应用边界条件到半步速度
-        if bc_params is not None:
-            apply_velocity_bc(u_half, w_half, bc_params)
+    # 应用温度边界条件
+    T[0, :] = 1.0  # 底部热
+    T[-1, :] = 0.0  # 顶部冷
+    T[:, 0] = T[:, 1]  # 左边绝热
+    T[:, -1] = T[:, -2]  # 右边绝热
 
-        # 🔑 关键修改3：中间投影
-        div_half = self.operators.d_dx(u_half) + self.operators.d_dz(w_half)
-        if np.max(np.abs(div_half)) > 1e-10:
-            phi_half = self._solve_poisson_stable(div_half / (0.5 * dt), tol=1e-8)
-            dphi_dx = self.operators.d_dx(phi_half)
-            dphi_dz = self.operators.d_dz(phi_half)
-            u_half = u_half - 0.5 * dt * dphi_dx
-            w_half = w_half - 0.5 * dt * dphi_dz
+    print("初始条件设置完成")
+    print(f"温度范围: {np.min(T):.3f} 到 {np.max(T):.3f}")
 
-        # 步骤2：完整步动量预测
-        dp_dx = self.operators.d_dx(p)
-        dp_dz = self.operators.d_dz(p)
+    # 测试算子功能
+    print("\n测试微分算子...")
 
-        u_star = u + alpha * dt * (-dp_dx/self.rho + viscous_u - Nu)
-        w_star = w + alpha * dt * (-dp_dz/self.rho + viscous_w - Nw)
+    # 测试梯度
+    dT_dx = operators.d_dx(T)
+    dT_dz = operators.d_dz(T)
+    print(f"温度梯度计算完成，范围: dT/dx=[{np.min(dT_dx):.3f}, {np.max(dT_dx):.3f}]")
+    print(f"                    dT/dz=[{np.min(dT_dz):.3f}, {np.max(dT_dz):.3f}]")
 
-        # 应用边界条件
-        if bc_params is not None:
-            apply_velocity_bc(u_star, w_star, bc_params)
+    # 测试拉普拉斯算子
+    lap_T = operators.laplacian(T)
+    print(f"拉普拉斯算子计算完成，范围: [{np.min(lap_T):.3f}, {np.max(lap_T):.3f}]")
 
-        # 🔑 关键修改4：最终投影（更严格）
-        div_star = self.operators.d_dx(u_star) + self.operators.d_dz(w_star)
-        rhs = div_star / dt
+    # 测试散度算子
+    div_u = operators.d_dx(u) + operators.d_dz(w)
+    print(f"速度散度: {np.max(np.abs(div_u)):.2e} (应该接近0)")
 
-        phi = self._solve_poisson_stable(rhs, tol=1e-8, max_iter=10000)
+    # 可视化初始条件
+    X, Z = np.meshgrid(x_p, z_p)
 
-        # 速度校正
-        dphi_dx = self.operators.d_dx(phi)
-        dphi_dz = self.operators.d_dz(phi)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
-        u_new = u_star - dt * dphi_dx
-        w_new = w_star - dt * dphi_dz
+    # 温度场
+    ax = axes[0, 0]
+    im1 = ax.contourf(X, Z, T, levels=20, cmap='RdBu_r')
+    ax.set_title('Initial temperature field')
+    ax.set_xlabel('x')
+    ax.set_ylabel('z')
+    ax.set_aspect('equal')
+    plt.colorbar(im1, ax=ax)
 
-        # 🔑 关键修改5：后处理散度检查
-        div_final = self.operators.d_dx(u_new) + self.operators.d_dz(w_new)
-        max_div_final = np.max(np.abs(div_final))
+    # 温度梯度（x方向）
+    ax = axes[0, 1]
+    im2 = ax.contourf(X, Z, dT_dx, levels=20, cmap='RdBu_r')
+    ax.set_title('dT/dx')
+    ax.set_xlabel('x')
+    ax.set_ylabel('z')
+    ax.set_aspect('equal')
+    plt.colorbar(im2, ax=ax)
 
-        if max_div_final > 1e-6:  # 如果散度仍然太大
-            print(f"    Post-correction needed: div={max_div_final:.2e}")
-            phi_final = self._solve_poisson_stable(div_final, tol=1e-10)
-            dphi_dx_final = self.operators.d_dx(phi_final)
-            dphi_dz_final = self.operators.d_dz(phi_final)
-            u_new = u_new - dphi_dx_final
-            w_new = w_new - dphi_dz_final
-            phi = phi + phi_final
+    # 温度梯度（z方向）
+    ax = axes[1, 0]
+    im3 = ax.contourf(X, Z, dT_dz, levels=20, cmap='RdBu_r')
+    ax.set_title('dT/dz')
+    ax.set_xlabel('x')
+    ax.set_ylabel('z')
+    ax.set_aspect('equal')
+    plt.colorbar(im3, ax=ax)
 
-        # 压力更新
-        p_new = p + phi
+    # 拉普拉斯算子
+    ax = axes[1, 1]
+    im4 = ax.contourf(X, Z, lap_T, levels=20, cmap='RdBu_r')
+    ax.set_title('∇²T')
+    ax.set_xlabel('x')
+    ax.set_ylabel('z')
+    ax.set_aspect('equal')
+    plt.colorbar(im4, ax=ax)
 
-        # 最终边界条件
-        if bc_params is not None:
-            apply_pressure_bc(p_new, bc_params)
+    plt.tight_layout()
+    plt.show()
 
-        return u_new, w_new, p_new
+    print("\n✅ 基础测试完成！")
+    print("如果看到合理的图形，说明基础组件工作正常。")
 
-    def _solve_poisson_stable(self, rhs, max_iter=10000, tol=1e-8):
-        """
-        超高精度泊松求解器
-        """
+    return grid, operators, u, w, T
+
+
+def test_poisson_solver():
+    """测试泊松求解器"""
+    print("\n" + "=" * 50)
+    print("测试泊松求解器")
+    print("=" * 50)
+
+    # 创建网格
+    grid = Grid2D(nx=16, nz=16, Lx=1.0, Lz=1.0, staggered=False)
+    operators = FluidOperators(grid)
+
+    # 创建测试右端项：∇²φ = -2π²sin(πx)sin(πz)
+    x_p, z_p = grid.get_pressure_grid()
+    X, Z = np.meshgrid(x_p, z_p)
+
+    # 解析解：φ = sin(πx)sin(πz)
+    phi_exact = np.sin(np.pi * X) * np.sin(np.pi * Z)
+
+    # 右端项
+    rhs = -2 * np.pi ** 2 * phi_exact
+
+    # 简单的泊松求解器
+    def solve_poisson_simple(rhs, max_iter=1000, tol=1e-6):
         phi = np.zeros_like(rhs)
-        dx = self.grid.Lx / self.nx
-        dz = self.grid.Lz / self.nz
-
-        # 确保兼容性
-        rhs_mean = np.mean(rhs)
-        rhs = rhs - rhs_mean
-
-        # 🔑 使用更优化的SOR参数
-        omega = 1.95  # 接近最优
+        dx = grid.dx
 
         for iteration in range(max_iter):
             phi_old = phi.copy()
 
-            # Red-Black Gauss-Seidel（更稳定）
-            # Red points
+            # Gauss-Seidel
             for j in range(1, rhs.shape[0] - 1):
                 for i in range(1, rhs.shape[1] - 1):
-                    if (i + j) % 2 == 0:  # Red points
-                        phi_new_val = 0.25 * (
+                    phi[j, i] = 0.25 * (
                             phi[j + 1, i] + phi[j - 1, i] +
                             phi[j, i + 1] + phi[j, i - 1] -
                             dx ** 2 * rhs[j, i]
-                        )
-                        phi[j, i] = (1 - omega) * phi[j, i] + omega * phi_new_val
+                    )
 
-            # Black points
-            for j in range(1, rhs.shape[0] - 1):
-                for i in range(1, rhs.shape[1] - 1):
-                    if (i + j) % 2 == 1:  # Black points
-                        phi_new_val = 0.25 * (
-                            phi[j + 1, i] + phi[j - 1, i] +
-                            phi[j, i + 1] + phi[j, i - 1] -
-                            dx ** 2 * rhs[j, i]
-                        )
-                        phi[j, i] = (1 - omega) * phi[j, i] + omega * phi_new_val
+            # 边界条件：φ = 0
+            phi[0, :] = 0
+            phi[-1, :] = 0
+            phi[:, 0] = 0
+            phi[:, -1] = 0
 
-            # 边界条件
-            phi[0, :] = phi[1, :]
-            phi[-1, :] = phi[-2, :]
-            phi[:, 0] = phi[:, 1]
-            phi[:, -1] = phi[:, -2]
-
-            # 移除平均值
-            phi -= np.mean(phi)
-
-            # 检查收敛
             if iteration % 100 == 0:
-                residual = 0
-                for j in range(1, rhs.shape[0] - 1):
-                    for i in range(1, rhs.shape[1] - 1):
-                        laplacian = (phi[j + 1, i] - 2 * phi[j, i] + phi[j - 1, i]) / dz ** 2 + \\
-                                    (phi[j, i + 1] - 2 * phi[j, i] + phi[j, i - 1]) / dx ** 2
-                        residual = max(residual, abs(laplacian - rhs[j, i]))
-
-                if residual < tol:
-                    if iteration > 0:
-                        print(f"    Enhanced Poisson converged in {iteration + 1} iter (residual: {residual:.2e})")
+                change = np.max(np.abs(phi - phi_old))
+                print(f"  迭代 {iteration}: 变化 = {change:.2e}")
+                if change < tol:
+                    print(f"  收敛于迭代 {iteration}")
                     break
 
         return phi
-'''
 
-    print("=" * 60)
-    print("增强投影方法求解器代码")
-    print("=" * 60)
-    print(enhanced_solver_code)
+    # 求解
+    phi_numerical = solve_poisson_simple(rhs)
 
+    # 比较
+    error = np.abs(phi_numerical - phi_exact)
+    max_error = np.max(error)
+    mean_error = np.mean(error)
 
-def test_enhanced_projection():
-    """
-    测试增强投影方法
-    """
-    print("\n" + "=" * 60)
-    print("测试增强投影方法")
-    print("=" * 60)
+    print(f"泊松求解器测试结果:")
+    print(f"  最大误差: {max_error:.2e}")
+    print(f"  平均误差: {mean_error:.2e}")
+    print(f"  测试: {'✅ 通过' if max_error < 0.01 else '❌ 失败'}")
 
-    from stable_navier_stokes import StableNavierStokesSolver
+    # 可视化
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
 
-    # 手动实现增强投影方法
-    class TestEnhancedSolver(StableNavierStokesSolver):
-        def time_step_enhanced(self, u, w, p, dt, bc_params=None):
-            """简化的增强投影测试"""
+    axes[0].contourf(X, Z, phi_exact, levels=20, cmap='RdBu_r')
+    axes[0].set_title('Analytical solution')
+    axes[0].set_aspect('equal')
 
-            # 更严格的初始投影
-            div_initial = self.operators.d_dx(u) + self.operators.d_dz(w)
-            if np.max(np.abs(div_initial)) > 1e-12:
-                phi_init = self._solve_poisson_enhanced(div_initial)
-                dphi_dx = self.operators.d_dx(phi_init)
-                dphi_dz = self.operators.d_dz(phi_init)
-                u = u - dphi_dx
-                w = w - dphi_dz
-                p = p + phi_init
+    axes[1].contourf(X, Z, phi_numerical, levels=20, cmap='RdBu_r')
+    axes[1].set_title('Numerical solution')
+    axes[1].set_aspect('equal')
 
-            # 标准投影步骤但参数更保守
-            dp_dx = self.operators.d_dx(p)
-            dp_dz = self.operators.d_dz(p)
-            viscous_u = self.nu * self.operators.laplacian(u)
-            viscous_w = self.nu * self.operators.laplacian(w)
-            Nu, Nw = self.compute_nonlinear_term_stable(u, w)
+    axes[2].contourf(X, Z, error, levels=20, cmap='viridis')
+    axes[2].set_title('Error')
+    axes[2].set_aspect('equal')
 
-            alpha = 0.1  # 非常保守
-            u_star = u + alpha * dt * (-dp_dx / self.rho + viscous_u - Nu)
-            w_star = w + alpha * dt * (-dp_dz / self.rho + viscous_w - Nw)
+    plt.tight_layout()
+    plt.show()
 
-            if bc_params is not None:
-                apply_velocity_bc(u_star, w_star, bc_params)
-
-            # 高精度投影
-            div_star = self.operators.d_dx(u_star) + self.operators.d_dz(w_star)
-            rhs = div_star / dt
-            phi = self._solve_poisson_enhanced(rhs)
-
-            dphi_dx = self.operators.d_dx(phi)
-            dphi_dz = self.operators.d_dz(phi)
-            u_new = u_star - dt * dphi_dx
-            w_new = w_star - dt * dphi_dz
-
-            # 后处理检查
-            div_final = self.operators.d_dx(u_new) + self.operators.d_dz(w_new)
-            if np.max(np.abs(div_final)) > 1e-8:
-                phi_correct = self._solve_poisson_enhanced(div_final)
-                dphi_dx_correct = self.operators.d_dx(phi_correct)
-                dphi_dz_correct = self.operators.d_dz(phi_correct)
-                u_new = u_new - dphi_dx_correct
-                w_new = w_new - dphi_dz_correct
-                phi = phi + phi_correct
-
-            p_new = p + phi
-            if bc_params is not None:
-                apply_pressure_bc(p_new, bc_params)
-
-            return u_new, w_new, p_new
-
-        def _solve_poisson_enhanced(self, rhs):
-            """增强泊松求解器"""
-            return self._solve_poisson_stable(rhs, max_iter=20000, tol=1e-10)
-
-    # 测试
-    grid = Grid2D(nx=16, nz=16, Lx=1.0, Lz=1.0, staggered=False)
-    solver = TestEnhancedSolver(grid, nu=0.01, rho=1.0)
-
-    u = np.zeros((grid.nz + 1, grid.nx + 1))
-    w = np.zeros((grid.nz + 1, grid.nx + 1))
-    p = np.zeros((grid.nz + 1, grid.nx + 1))
-
-    bc_params = {
-        'type': 'cavity',
-        'u_top': 0.1,
-        'u_bottom': 0.0,
-        'u_left': 0.0,
-        'u_right': 0.0,
-    }
-
-    dt = 0.01  # 更小的时间步
-
-    print("增强投影方法测试（10步）:")
-
-    divergences = []
-    for step in range(10):
-        u, w, p = solver.time_step_enhanced(u, w, p, dt, bc_params)
-
-        div_u = solver.operators.d_dx(u) + solver.operators.d_dz(w)
-        max_div = np.max(np.abs(div_u))
-        divergences.append(max_div)
-
-        print(f"  步骤 {step + 1}: 散度={max_div:.8f}")
-
-        if max_div > 0.01:
-            print(f"    散度过大，停止测试")
-            break
-
-    max_final_div = max(divergences) if divergences else float('inf')
-    success = max_final_div < 0.001
-
-    print(f"\n增强投影结果:")
-    print(f"  最大散度: {max_final_div:.8f}")
-    print(f"  成功: {'✅' if success else '❌'}")
-
-    return success
+    return max_error < 0.01
 
 
-def provide_alternative_approaches():
-    """
-    提供替代方法
-    """
-    print("\n" + "=" * 60)
-    print("替代方法建议")
-    print("=" * 60)
+def estimate_stability_parameters():
+    """估算稳定性参数"""
+    print("\n" + "=" * 50)
+    print("估算稳定性参数")
+    print("=" * 50)
 
-    alternatives = '''
-如果增强投影仍然不够，考虑以下替代方法：
+    # 典型参数
+    grid = Grid2D(nx=32, nz=16, Lx=2.0, Lz=1.0, staggered=False)
 
-1. **使用真正的交错网格**
-   - 实现MAC (Marker-and-Cell) 方法
-   - 在速度定义点自然满足散度自由条件
+    # 物理参数
+    nu = 1e-5  # 动力学粘度
+    kappa = 1e-5  # 热扩散系数
+    alpha = 1e-3  # 热膨胀系数
+    g = 9.81  # 重力
+    Delta_T = 1.0  # 温差
+    L = grid.Lz  # 特征长度
 
-2. **使用不可压缩专用方法**
-   - SIMPLE/PISO算法
-   - 分离式压力-速度耦合
+    # 无量纲参数
+    Pr = nu / kappa
+    Ra = g * alpha * Delta_T * L ** 3 / (nu * kappa)
 
-3. **降低雷诺数**
-   - 增加粘性系数 nu = 0.1 (而不是0.01)
-   - 使问题更稳定
+    print(f"网格: {grid.nx}×{grid.nz}")
+    print(f"网格间距: dx={grid.dx:.4f}, dz={grid.dz:.4f}")
+    print(f"Prandtl数: Pr = {Pr:.2f}")
+    print(f"Rayleigh数: Ra = {Ra:.2e}")
 
-4. **使用隐式时间积分**
-   - Crank-Nicolson方法
-   - 后向欧拉法
+    # 稳定性估算
+    h_min = min(grid.dx, grid.dz)
 
-5. **问题简化**
-   - 先测试更简单的情况（如 u_top = 0.001）
-   - 确保方法在简单情况下工作
-'''
+    # CFL条件（估算最大速度为0.1）
+    u_max = 0.1
+    dt_cfl = 0.5 * h_min / u_max
 
-    print(alternatives)
+    # 扩散条件
+    dt_diff_nu = 0.25 * h_min ** 2 / nu
+    dt_diff_kappa = 0.25 * h_min ** 2 / kappa
+    dt_diff = min(dt_diff_nu, dt_diff_kappa)
+
+    dt_recommend = min(dt_cfl, dt_diff) * 0.8
+
+    print(f"\n稳定性分析:")
+    print(f"  CFL限制: dt < {dt_cfl:.2e}")
+    print(f"  扩散限制 (ν): dt < {dt_diff_nu:.2e}")
+    print(f"  扩散限制 (κ): dt < {dt_diff_kappa:.2e}")
+    print(f"  推荐时间步长: dt = {dt_recommend:.2e}")
+
+    # 估算计算成本
+    total_time = 1.0  # 模拟1秒
+    nt = int(total_time / dt_recommend)
+
+    print(f"\n计算成本估算:")
+    print(f"  模拟 {total_time} 秒需要 {nt} 步")
+    print(f"  每步计算约 {grid.nx * grid.nz * 10} 次操作")
+    print(f"  总计算量: ~{nt * grid.nx * grid.nz * 10:.1e} 次操作")
+
+    return dt_recommend
 
 
 if __name__ == "__main__":
-    # 提供增强投影代码
-    create_enhanced_projection_solver()
+    print("🚀 开始Boussinesq模型测试序列")
 
-    # 测试增强投影
-    success = test_enhanced_projection()
+    # 测试1：基础功能
+    grid, operators, u, w, T = simple_rayleigh_benard_test()
 
-    # 提供替代方法
-    provide_alternative_approaches()
+    # 测试2：泊松求解器
+    poisson_ok = test_poisson_solver()
 
-    print(f"\n" + "=" * 60)
-    print("根本性修复总结")
+    # 测试3：稳定性参数
+    dt_recommend = estimate_stability_parameters()
+
+    print("\n" + "=" * 60)
+    print("测试总结")
     print("=" * 60)
-    print(f"增强投影测试: {'✅ 成功' if success else '❌ 失败'}")
+    print(f"基础功能: ✅ 完成")
+    print(f"泊松求解器: {'✅ 通过' if poisson_ok else '❌ 需要调试'}")
+    print(f"推荐时间步长: {dt_recommend:.2e}")
 
-    if not success:
-        print("\n🤔 可能需要考虑:")
-        print("1. 这是方腔流的已知数值难题")
-        print("2. 可能需要专用的不可压缩流求解器")
-        print("3. 考虑使用商业CFD软件验证结果")
-        print("4. 先在更简单的问题上验证方法")
+    if poisson_ok:
+        print("\n🎉 准备就绪！可以运行完整的Boussinesq求解器了。")
+        print("下一步：运行 boussinesq_solver.py 开始真正的对流模拟！")
+    else:
+        print("\n⚠️  需要先修复泊松求解器再继续。")

@@ -1,4 +1,5 @@
 import numpy as np
+from tqdm import tqdm
 
 def rk4(f, y0, dt, n):
     """
@@ -27,7 +28,7 @@ def rk4(f, y0, dt, n):
     Y = np.zeros((M, n + 1))
     Y[:, 0] = y0
 
-    for n in range(n):
+    for n in tqdm(range(n), desc='Running RK4: '):
         y1 = f(Y[:, n], t[n])
         y2 = f(Y[:, n] + dt * y1 / 2, t[n] + dt / 2)
         y3 = f(Y[:, n] + dt * y2 / 2, t[n] + dt / 2)
