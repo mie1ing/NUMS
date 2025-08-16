@@ -94,13 +94,15 @@ def fdm2_c3p_pbc(f, h):
     df = np.zeros_like(f)
     n = len(f)
 
-    if n > 2:
+    if n >= 3:
         df[1:-1] = (f[2:] - 2 * f[1:-1] + f[:-2]) / (h ** 2)
-        df[0] = (f[1] - 2 * f[0] + f[-1]) / (h ** 2)  # periodic BCs
-        df[-1] = (f[0] - 2 * f[-1] + f[-2]) / (h ** 2)  # periodic BCs
-    elif n == 2:
-        df[0] = df[1] = (f[1] - 2 * f[0] + f[0]) / (h ** 2)
-    elif n == 1:
+        if n >= 4:
+            df[0] = (f[1] - 2 * f[0] + f[-1]) / (h ** 2)  # periodic BCs
+            df[-1] = (f[0] - 2 * f[-1] + f[-2]) / (h ** 2)  # periodic BCs
+        else:
+            df[0] = df[1]
+            df[-1] = df[1]
+    else:
         df[0] = 0
     return df
 
@@ -111,13 +113,15 @@ def fdm2_c3p_npbc(f, h):
     df = np.zeros_like(f)
     n = len(f)
 
-    if n > 2:
+    if n >= 3:
         df[1:-1] = (f[2:] - 2 * f[1:-1] + f[:-2]) / (h ** 2)
-        df[0] = (f[2] - 2 * f[1] + f[0]) / (h ** 2)  # forward
-        df[-1] = (f[-1] - 2 * f[-2] + f[-3]) / (h ** 2)  # backward
-    elif n == 2:
-        df[0] = df[1] = (f[1] - 2 * f[0] + f[0]) / (h ** 2)
-    elif n == 1:
+        if n >= 4:
+            df[0] = (f[2] - 2 * f[1] + f[0]) / (h ** 2)  # forward
+            df[-1] = (f[-1] - 2 * f[-2] + f[-3]) / (h ** 2)  # backward
+        else:
+            df[0] = df[1]
+            df[-1] = df[1]
+    else:
         df[0] = 0
     return df
 

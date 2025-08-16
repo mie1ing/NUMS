@@ -1,282 +1,512 @@
-"""
-简化的Boussinesq测试 - 验证基础功能
-"""
 import numpy as np
 import matplotlib.pyplot as plt
 from grid import Grid2D
-from operators import FluidOperators
+from operators import FluidOperators, apply_velocity_bc, apply_pressure_bc, apply_temperature_bc
+from nums import ode
 
 
-def simple_rayleigh_benard_test():
-    """简单的Rayleigh-Bénard测试"""
-    print("开始简单的Rayleigh-Bénard对流测试...")
+class ImprovedBoussinesqSolver:
+    """
+    改进的2D Boussinesq模型求解器 - 充分利用现有的边界条件函数
 
-    # 创建小网格进行快速测试
-    grid = Grid2D(nx=16, nz=8, Lx=2.0, Lz=1.0, staggered=False)
-    operators = FluidOperators(grid)
+    求解方程组：
+    动量方程: ∂u/∂t + u·∇u = -∇p/ρ₀ + ν∇²u + gα(T-T₀)ẑ
+    连续性方程: ∇·u = 0
+    温度方程: ∂T/∂t + u·∇T = κ∇²T
+    """
 
-    print(f"网格大小: {grid.nx}×{grid.nz}")
-    print(f"网格间距: dx={grid.dx:.3f}, dz={grid.dz:.3f}")
+    def __init__(self, grid, nu=1e-4, kappa=1e-4, alpha=1e-3, g=9.81,
+                 T_hot=274.0, T_cold=273.0, rho0=1.0):
+        """
+        初始化改进的Boussinesq求解器
 
-    # 创建简单的初始条件
-    u = np.zeros((grid.nz + 1, grid.nx + 1))
-    w = np.zeros((grid.nz + 1, grid.nx + 1))
-    T = np.zeros((grid.nz + 1, grid.nx + 1))
+        参数:
+            grid: Grid2D对象
+            nu: 动力学粘度
+            kappa: 热扩散系数
+            alpha: 热膨胀系数
+            g: 重力加速度
+            T_hot: 底部温度
+            T_cold: 顶部温度
+            rho0: 参考密度
+        """
+        self.grid = grid
+        self.nu = nu
+        self.kappa = kappa
+        self.alpha = alpha
+        self.g = g
+        self.T_hot = T_hot
+        self.T_cold = T_cold
+        self.T0 = (T_hot + T_cold) / 2  # 参考温度
+        self.Delta_T = T_hot - T_cold    # 温差
+        self.rho0 = rho0
 
-    # 设置温度剖面：底部热，顶部冷
-    x_p, z_p = grid.get_pressure_grid()
+        self.operators = FluidOperators(grid)
+        self.nx, self.nz = grid.nx, grid.nz
+        self.dx, self.dz = grid.dx, grid.dz
 
-    for j in range(grid.nz + 1):
-        # 线性温度剖面
-        T[j, :] = 1.0 - z_p[j] / grid.Lz  # 从1.0到0.0
+        # 设置边界条件参数
+        self.setup_boundary_conditions()
 
-        # 添加小扰动
-        for i in range(grid.nx + 1):
-            perturbation = 0.01 * np.sin(2 * np.pi * x_p[i] / grid.Lx) * \
-                           np.sin(np.pi * z_p[j] / grid.Lz)
-            T[j, i] += perturbation
+        # 计算无量纲参数
+        self.compute_dimensionless_parameters()
 
-    # 应用温度边界条件
-    T[0, :] = 1.0  # 底部热
-    T[-1, :] = 0.0  # 顶部冷
-    T[:, 0] = T[:, 1]  # 左边绝热
-    T[:, -1] = T[:, -2]  # 右边绝热
+        print(f"Improved 2D Boussinesq Solver Initialized")
+        print(f"Grid: {self.nx}×{self.nz}")
+        print(f"Temperature: {self.T_hot}K (hot) to {self.T_cold}K (cold)")
+        print(f"Prandtl number: Pr = {self.Pr:.4f}")
+        print(f"Rayleigh number: Ra = {self.Ra:.2e}")
 
-    print("初始条件设置完成")
-    print(f"温度范围: {np.min(T):.3f} 到 {np.max(T):.3f}")
+    def setup_boundary_conditions(self):
+        """设置边界条件参数，使用现有的边界条件函数"""
+        # 速度边界条件：所有边界无滑移
+        self.velocity_bc_params = {
+            'type': 'cavity',  # 使用cavity类型，所有边界都是无滑移
+            'u_top': 0.0,
+            'u_bottom': 0.0,
+            'u_left': 0.0,
+            'u_right': 0.0
+        }
 
-    # 测试算子功能
-    print("\n测试微分算子...")
+        # 压力边界条件：齐次Neumann（由apply_pressure_bc默认处理）
+        self.pressure_bc_params = {
+            'type': 'default'  # 默认所有边界零梯度
+        }
 
-    # 测试梯度
-    dT_dx = operators.d_dx(T)
-    dT_dz = operators.d_dz(T)
-    print(f"温度梯度计算完成，范围: dT/dx=[{np.min(dT_dx):.3f}, {np.max(dT_dx):.3f}]")
-    print(f"                    dT/dz=[{np.min(dT_dz):.3f}, {np.max(dT_dz):.3f}]")
+        # 温度边界条件参数（需要传递给apply_temperature_bc）
+        self.temperature_bc_params = {
+            'T_hot': self.T_hot,
+            'T_cold': self.T_cold
+        }
 
-    # 测试拉普拉斯算子
-    lap_T = operators.laplacian(T)
-    print(f"拉普拉斯算子计算完成，范围: [{np.min(lap_T):.3f}, {np.max(lap_T):.3f}]")
+    def compute_dimensionless_parameters(self):
+        """计算关键的无量纲参数"""
+        # Prandtl数: Pr = ν/κ
+        self.Pr = self.nu / self.kappa
 
-    # 测试散度算子
-    div_u = operators.d_dx(u) + operators.d_dz(w)
-    print(f"速度散度: {np.max(np.abs(div_u)):.2e} (应该接近0)")
+        # 特征长度尺度（取z方向长度）
+        self.L = self.grid.Lz
 
-    # 可视化初始条件
-    X, Z = np.meshgrid(x_p, z_p)
+        # Rayleigh数: Ra = gαΔTL³/(νκ)
+        self.Ra = (self.g * self.alpha * self.Delta_T * self.L**3) / (self.nu * self.kappa)
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    def boussinesq_rhs(self, state_flat, t):
+        """
+        Boussinesq方程组的右端项
 
-    # 温度场
-    ax = axes[0, 0]
-    im1 = ax.contourf(X, Z, T, levels=20, cmap='RdBu_r')
-    ax.set_title('Initial temperature field')
-    ax.set_xlabel('x')
-    ax.set_ylabel('z')
-    ax.set_aspect('equal')
-    plt.colorbar(im1, ax=ax)
+        参数:
+            state_flat: 展平的状态向量 [u, w, T]
+            t: 时间
 
-    # 温度梯度（x方向）
-    ax = axes[0, 1]
-    im2 = ax.contourf(X, Z, dT_dx, levels=20, cmap='RdBu_r')
-    ax.set_title('dT/dx')
-    ax.set_xlabel('x')
-    ax.set_ylabel('z')
-    ax.set_aspect('equal')
-    plt.colorbar(im2, ax=ax)
+        返回:
+            rhs_flat: 展平的右端项
+        """
+        # 解包状态向量
+        n_field = (self.nz + 1) * (self.nx + 1)
 
-    # 温度梯度（z方向）
-    ax = axes[1, 0]
-    im3 = ax.contourf(X, Z, dT_dz, levels=20, cmap='RdBu_r')
-    ax.set_title('dT/dz')
-    ax.set_xlabel('x')
-    ax.set_ylabel('z')
-    ax.set_aspect('equal')
-    plt.colorbar(im3, ax=ax)
+        u = state_flat[0:n_field].reshape((self.nz + 1, self.nx + 1))
+        w = state_flat[n_field:2*n_field].reshape((self.nz + 1, self.nx + 1))
+        T = state_flat[2*n_field:3*n_field].reshape((self.nz + 1, self.nx + 1))
 
-    # 拉普拉斯算子
-    ax = axes[1, 1]
-    im4 = ax.contourf(X, Z, lap_T, levels=20, cmap='RdBu_r')
-    ax.set_title('∇²T')
-    ax.set_xlabel('x')
-    ax.set_ylabel('z')
-    ax.set_aspect('equal')
-    plt.colorbar(im4, ax=ax)
+        # 应用边界条件（使用现有函数）
+        apply_velocity_bc(u, w, self.velocity_bc_params)
+        apply_temperature_bc(T, self.T_hot, self.T_cold)
 
-    plt.tight_layout()
-    plt.show()
+        # 计算各项
+        # 1. 对流项 u·∇u
+        conv_u, conv_w = self.compute_convection_terms(u, w)
 
-    print("\n✅ 基础测试完成！")
-    print("如果看到合理的图形，说明基础组件工作正常。")
+        # 2. 粘性项 ν∇²u
+        visc_u = self.nu * self.operators.laplacian(u)
+        visc_w = self.nu * self.operators.laplacian(w)
 
-    return grid, operators, u, w, T
+        # 3. 浮力项 gα(T-T₀) （只在w方程中）
+        buoyancy_w = self.g * self.alpha * (T - self.T0)
 
+        # 4. 温度方程项
+        temp_conv = self.compute_temperature_convection(u, w, T)
+        temp_diff = self.kappa * self.operators.laplacian(T)
 
-def test_poisson_solver():
-    """测试泊松求解器"""
-    print("\n" + "=" * 50)
-    print("测试泊松求解器")
-    print("=" * 50)
+        # 动量方程（不包括压力梯度，通过压力投影处理）
+        du_dt = -conv_u + visc_u
+        dw_dt = -conv_w + visc_w + buoyancy_w
 
-    # 创建网格
-    grid = Grid2D(nx=16, nz=16, Lx=1.0, Lz=1.0, staggered=False)
-    operators = FluidOperators(grid)
+        # 温度方程
+        dT_dt = -temp_conv + temp_diff
 
-    # 创建测试右端项：∇²φ = -2π²sin(πx)sin(πz)
-    x_p, z_p = grid.get_pressure_grid()
-    X, Z = np.meshgrid(x_p, z_p)
+        # 应用压力投影保证不可压缩性
+        du_dt, dw_dt = self.apply_pressure_projection(du_dt, dw_dt)
 
-    # 解析解：φ = sin(πx)sin(πz)
-    phi_exact = np.sin(np.pi * X) * np.sin(np.pi * Z)
+        # 在边界处设置时间导数为零（Dirichlet边界条件的处理）
+        self.apply_boundary_rhs(du_dt, dw_dt, dT_dt)
 
-    # 右端项
-    rhs = -2 * np.pi ** 2 * phi_exact
+        # 重新打包
+        rhs = np.concatenate([du_dt.flatten(), dw_dt.flatten(), dT_dt.flatten()])
 
-    # 简单的泊松求解器
-    def solve_poisson_simple(rhs, max_iter=1000, tol=1e-6):
+        return rhs
+
+    def compute_convection_terms(self, u, w):
+        """计算对流项 u·∇u"""
+        # u方程的对流项: u∂u/∂x + w∂u/∂z
+        du_dx = self.operators.d_dx(u)
+        du_dz = self.operators.d_dz(u)
+        conv_u = u * du_dx + w * du_dz
+
+        # w方程的对流项: u∂w/∂x + w∂w/∂z
+        dw_dx = self.operators.d_dx(w)
+        dw_dz = self.operators.d_dz(w)
+        conv_w = u * dw_dx + w * dw_dz
+
+        return conv_u, conv_w
+
+    def compute_temperature_convection(self, u, w, T):
+        """计算温度对流项 u·∇T"""
+        dT_dx = self.operators.d_dx(T)
+        dT_dz = self.operators.d_dz(T)
+        return u * dT_dx + w * dT_dz
+
+    def apply_pressure_projection(self, du_dt, dw_dt):
+        """应用压力投影保证速度场无散度"""
+        # 计算速度散度
+        div_u_star = self.operators.d_dx(du_dt) + self.operators.d_dz(dw_dt)
+
+        # 求解泊松方程 ∇²φ = ∇·u*
+        phi = self.solve_poisson(div_u_star)
+
+        # 校正速度
+        dphi_dx = self.operators.d_dx(phi)
+        dphi_dz = self.operators.d_dz(phi)
+
+        du_dt_corrected = du_dt - dphi_dx
+        dw_dt_corrected = dw_dt - dphi_dz
+
+        return du_dt_corrected, dw_dt_corrected
+
+    def solve_poisson(self, rhs, max_iter=500, tol=1e-6):
+        """求解泊松方程 ∇²φ = rhs，使用改进的迭代方法"""
         phi = np.zeros_like(rhs)
-        dx = grid.dx
+
+        # 确保兼容性条件
+        rhs_mean = np.mean(rhs)
+        rhs = rhs - rhs_mean
+
+        # 使用SOR方法加速收敛
+        omega = 1.8  # SOR参数
 
         for iteration in range(max_iter):
             phi_old = phi.copy()
 
-            # Gauss-Seidel
+            # SOR迭代
             for j in range(1, rhs.shape[0] - 1):
                 for i in range(1, rhs.shape[1] - 1):
-                    phi[j, i] = 0.25 * (
-                            phi[j + 1, i] + phi[j - 1, i] +
-                            phi[j, i + 1] + phi[j, i - 1] -
-                            dx ** 2 * rhs[j, i]
+                    phi_new_val = 0.25 * (
+                        phi[j+1, i] + phi[j-1, i] +
+                        phi[j, i+1] + phi[j, i-1] -
+                        self.dx**2 * rhs[j, i]
                     )
+                    phi[j, i] = (1 - omega) * phi[j, i] + omega * phi_new_val
 
-            # 边界条件：φ = 0
-            phi[0, :] = 0
-            phi[-1, :] = 0
-            phi[:, 0] = 0
-            phi[:, -1] = 0
+            # 边界条件：齐次Neumann（使用现有函数的思路）
+            apply_pressure_bc(phi, self.pressure_bc_params)
 
-            if iteration % 100 == 0:
+            # 移除平均值保证唯一性
+            phi -= np.mean(phi)
+
+            # 检查收敛
+            if iteration % 50 == 0:
                 change = np.max(np.abs(phi - phi_old))
-                print(f"  迭代 {iteration}: 变化 = {change:.2e}")
                 if change < tol:
-                    print(f"  收敛于迭代 {iteration}")
                     break
 
         return phi
 
-    # 求解
-    phi_numerical = solve_poisson_simple(rhs)
+    def apply_boundary_rhs(self, du_dt, dw_dt, dT_dt):
+        """在右端项中应用边界条件（边界点的时间导数为零）"""
+        # 速度边界点的时间导数为零（Dirichlet边界条件）
+        du_dt[0, :] = 0    # 底部
+        du_dt[-1, :] = 0   # 顶部
+        du_dt[:, 0] = 0    # 左侧
+        du_dt[:, -1] = 0   # 右侧
 
-    # 比较
-    error = np.abs(phi_numerical - phi_exact)
-    max_error = np.max(error)
-    mean_error = np.mean(error)
+        dw_dt[0, :] = 0    # 底部
+        dw_dt[-1, :] = 0   # 顶部
+        dw_dt[:, 0] = 0    # 左侧
+        dw_dt[:, -1] = 0   # 右侧
 
-    print(f"泊松求解器测试结果:")
-    print(f"  最大误差: {max_error:.2e}")
-    print(f"  平均误差: {mean_error:.2e}")
-    print(f"  测试: {'✅ 通过' if max_error < 0.01 else '❌ 失败'}")
+        # 温度边界点的时间导数为零（Dirichlet边界条件）
+        dT_dt[0, :] = 0    # 底部
+        dT_dt[-1, :] = 0   # 顶部
+        # 侧边是Neumann边界条件，不需要设置为零
 
-    # 可视化
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    def solve(self, u_init, w_init, T_init, dt, nt):
+        """
+        求解Boussinesq方程组
 
-    axes[0].contourf(X, Z, phi_exact, levels=20, cmap='RdBu_r')
-    axes[0].set_title('Analytical solution')
-    axes[0].set_aspect('equal')
+        参数:
+            u_init, w_init, T_init: 初始条件
+            dt: 时间步长
+            nt: 时间步数
 
-    axes[1].contourf(X, Z, phi_numerical, levels=20, cmap='RdBu_r')
-    axes[1].set_title('Numerical solution')
-    axes[1].set_aspect('equal')
+        返回:
+            history: 包含u, w, T历史的字典
+            t_array: 时间数组
+        """
+        print(f"Starting Boussinesq simulation...")
+        print(f"Time step: {dt:.2e}, Number of steps: {nt}")
 
-    axes[2].contourf(X, Z, error, levels=20, cmap='viridis')
-    axes[2].set_title('Error')
-    axes[2].set_aspect('equal')
+        # 应用初始边界条件
+        u_init = u_init.copy()
+        w_init = w_init.copy()
+        T_init = T_init.copy()
 
-    plt.tight_layout()
-    plt.show()
+        # 使用现有边界条件函数
+        apply_velocity_bc(u_init, w_init, self.velocity_bc_params)
+        apply_temperature_bc(T_init, self.T_hot, self.T_cold)
 
-    return max_error < 0.01
+        # 打包初始状态
+        state_init = np.concatenate([
+            u_init.flatten(),
+            w_init.flatten(),
+            T_init.flatten()
+        ])
+
+        # 使用RK4求解
+        state_history, t_array = ode.rk4(self.boussinesq_rhs, state_init, dt, nt)
+
+        # 解包结果
+        n_field = (self.nz + 1) * (self.nx + 1)
+
+        u_history = np.zeros((nt + 1, self.nz + 1, self.nx + 1))
+        w_history = np.zeros((nt + 1, self.nz + 1, self.nx + 1))
+        T_history = np.zeros((nt + 1, self.nz + 1, self.nx + 1))
+
+        for i in range(nt + 1):
+            state = state_history[:, i]
+            u_history[i] = state[0:n_field].reshape((self.nz + 1, self.nx + 1))
+            w_history[i] = state[n_field:2*n_field].reshape((self.nz + 1, self.nx + 1))
+            T_history[i] = state[2*n_field:3*n_field].reshape((self.nz + 1, self.nx + 1))
+
+        print("Boussinesq simulation completed!")
+
+        history = {
+            'u': u_history,
+            'w': w_history,
+            'T': T_history
+        }
+
+        return history, t_array
+
+    def check_stability(self, dt):
+        """检查数值稳定性条件"""
+        # CFL条件（估算最大速度）
+        # 从浮力驱动估算特征速度：u ~ sqrt(gαΔTL)
+        u_char = np.sqrt(self.g * self.alpha * self.Delta_T * self.L)
+        dt_cfl = 0.5 * min(self.dx, self.dz) / max(u_char, 0.01)  # 避免除零
+
+        # 扩散稳定性条件
+        dt_diff_momentum = 0.25 * min(self.dx, self.dz)**2 / self.nu
+        dt_diff_thermal = 0.25 * min(self.dx, self.dz)**2 / self.kappa
+        dt_diff = min(dt_diff_momentum, dt_diff_thermal)
+
+        dt_stable = min(dt_cfl, dt_diff)
+
+        print(f"Stability Analysis:")
+        print(f"  Characteristic velocity: {u_char:.4f} m/s")
+        print(f"  CFL limit: {dt_cfl:.2e}")
+        print(f"  Diffusion limit (momentum): {dt_diff_momentum:.2e}")
+        print(f"  Diffusion limit (thermal): {dt_diff_thermal:.2e}")
+        print(f"  Recommended dt: {dt_stable:.2e}")
+        print(f"  Current dt: {dt:.2e}")
+        print(f"  Stable: {'✅' if dt <= dt_stable else '❌'}")
+
+        return dt <= dt_stable
+
+    def compute_diagnostics(self, history, t_array):
+        """计算诊断量"""
+        # 计算Nusselt数（无量纲传热率）
+        T_history = history['T']
+        nt = len(t_array)
+
+        Nu_history = np.zeros(nt)
+
+        for i in range(nt):
+            T = T_history[i]
+            # 底部热通量
+            dT_dz_bottom = (T[1, :] - T[0, :]) / self.dz
+            q_bottom = -self.kappa * np.mean(dT_dz_bottom)
+
+            # 传导热通量
+            q_conduction = self.kappa * self.Delta_T / self.L
+
+            # Nusselt数
+            Nu_history[i] = q_bottom / q_conduction
+
+        return {
+            'Nu': Nu_history,
+            'time': t_array
+        }
+
+    def plot_results(self, history, t_array, time_index=-1):
+        """可视化结果"""
+        u = history['u'][time_index]
+        w = history['w'][time_index]
+        T = history['T'][time_index]
+
+        x_p, z_p = self.grid.get_pressure_grid()
+        X, Z = np.meshgrid(x_p, z_p)
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+        # 温度场
+        ax = axes[0, 0]
+        im1 = ax.contourf(X, Z, T, levels=20, cmap='RdBu_r')
+        ax.set_title(f'Temperature at t={t_array[time_index]:.3f}')
+        ax.set_xlabel('x')
+        ax.set_ylabel('z')
+        ax.set_aspect('equal')
+        plt.colorbar(im1, ax=ax)
+
+        # 速度矢量场
+        ax = axes[0, 1]
+        skip = max(1, self.nx // 10)
+        speed = np.sqrt(u**2 + w**2)
+        Q = ax.quiver(X[::skip, ::skip], Z[::skip, ::skip],
+                      u[::skip, ::skip], w[::skip, ::skip],
+                      speed[::skip, ::skip], scale=None, alpha=0.8, cmap='viridis')
+        ax.set_title('Velocity Field')
+        ax.set_xlabel('x')
+        ax.set_ylabel('z')
+        ax.set_aspect('equal')
+        plt.colorbar(Q, ax=ax)
+
+        # u速度分量
+        ax = axes[1, 0]
+        im2 = ax.contourf(X, Z, u, levels=20, cmap='RdBu_r')
+        ax.set_title('u-velocity')
+        ax.set_xlabel('x')
+        ax.set_ylabel('z')
+        ax.set_aspect('equal')
+        plt.colorbar(im2, ax=ax)
+
+        # w速度分量
+        ax = axes[1, 1]
+        im3 = ax.contourf(X, Z, w, levels=20, cmap='RdBu_r')
+        ax.set_title('w-velocity')
+        ax.set_xlabel('x')
+        ax.set_ylabel('z')
+        ax.set_aspect('equal')
+        plt.colorbar(im3, ax=ax)
+
+        plt.tight_layout()
+        plt.show()
 
 
-def estimate_stability_parameters():
-    """估算稳定性参数"""
-    print("\n" + "=" * 50)
-    print("估算稳定性参数")
-    print("=" * 50)
+def create_initial_conditions(grid, condition_type='rayleigh_benard', amplitude=0.01):
+    """创建初始条件"""
+    x_p, z_p = grid.get_pressure_grid()
 
-    # 典型参数
+    u_init = np.zeros((grid.nz + 1, grid.nx + 1))
+    w_init = np.zeros((grid.nz + 1, grid.nx + 1))
+    T_init = np.zeros((grid.nz + 1, grid.nx + 1))
+
+    if condition_type == 'rayleigh_benard':
+        # 线性温度剖面 + 小扰动
+        T_hot, T_cold = 274.0, 273.0
+
+        for j in range(grid.nz + 1):
+            # 基础线性剖面
+            T_init[j, :] = T_hot - (T_hot - T_cold) * z_p[j] / grid.Lz
+
+            # 添加随机扰动触发对流
+            for i in range(grid.nx + 1):
+                perturbation = amplitude * (2 * np.random.random() - 1)
+                T_init[j, i] += perturbation
+
+    elif condition_type == 'sine_perturbation':
+        # 线性剖面 + 正弦扰动
+        T_hot, T_cold = 274.0, 273.0
+
+        for j in range(grid.nz + 1):
+            T_init[j, :] = T_hot - (T_hot - T_cold) * z_p[j] / grid.Lz
+
+        # 添加正弦扰动
+        for j in range(grid.nz + 1):
+            for i in range(grid.nx + 1):
+                perturbation = amplitude * np.sin(2 * np.pi * x_p[i] / grid.Lx) * \
+                              np.sin(np.pi * z_p[j] / grid.Lz)
+                T_init[j, i] += perturbation
+
+    return u_init, w_init, T_init
+
+
+def test_improved_rayleigh_benard():
+    """测试改进的Rayleigh-Bénard求解器"""
+    print("=" * 60)
+    print("Testing Improved Rayleigh-Bénard Convection Solver")
+    print("=" * 60)
+
+    # 创建网格（较小网格用于快速测试）
     grid = Grid2D(nx=32, nz=16, Lx=2.0, Lz=1.0, staggered=False)
 
-    # 物理参数
-    nu = 1e-5  # 动力学粘度
-    kappa = 1e-5  # 热扩散系数
-    alpha = 1e-3  # 热膨胀系数
-    g = 9.81  # 重力
-    Delta_T = 1.0  # 温差
-    L = grid.Lz  # 特征长度
+    # 设置物理参数
+    nu = 1e-5      # 动力学粘度
+    kappa = 1e-5   # 热扩散系数
+    alpha = 1e-3   # 热膨胀系数
+    g = 9.81       # 重力
 
-    # 无量纲参数
-    Pr = nu / kappa
-    Ra = g * alpha * Delta_T * L ** 3 / (nu * kappa)
+    solver = ImprovedBoussinesqSolver(grid, nu=nu, kappa=kappa, alpha=alpha, g=g)
 
-    print(f"网格: {grid.nx}×{grid.nz}")
-    print(f"网格间距: dx={grid.dx:.4f}, dz={grid.dz:.4f}")
-    print(f"Prandtl数: Pr = {Pr:.2f}")
-    print(f"Rayleigh数: Ra = {Ra:.2e}")
+    # 创建初始条件
+    u_init, w_init, T_init = create_initial_conditions(grid, 'sine_perturbation', amplitude=0.1)
 
-    # 稳定性估算
-    h_min = min(grid.dx, grid.dz)
+    # 设置时间步长
+    dt = 1e-1
+    nt = 500  # 较少步数用于快速测试
 
-    # CFL条件（估算最大速度为0.1）
-    u_max = 0.1
-    dt_cfl = 0.5 * h_min / u_max
+    # 检查稳定性
+    is_stable = solver.check_stability(dt)
 
-    # 扩散条件
-    dt_diff_nu = 0.25 * h_min ** 2 / nu
-    dt_diff_kappa = 0.25 * h_min ** 2 / kappa
-    dt_diff = min(dt_diff_nu, dt_diff_kappa)
+    if not is_stable:
+        print("⚠️ Warning: Current time step may be unstable!")
 
-    dt_recommend = min(dt_cfl, dt_diff) * 0.8
+    # 求解
+    history, t_array = solver.solve(u_init, w_init, T_init, dt, nt)
 
-    print(f"\n稳定性分析:")
-    print(f"  CFL限制: dt < {dt_cfl:.2e}")
-    print(f"  扩散限制 (ν): dt < {dt_diff_nu:.2e}")
-    print(f"  扩散限制 (κ): dt < {dt_diff_kappa:.2e}")
-    print(f"  推荐时间步长: dt = {dt_recommend:.2e}")
+    # 计算诊断量
+    diagnostics = solver.compute_diagnostics(history, t_array)
 
-    # 估算计算成本
-    total_time = 1.0  # 模拟1秒
-    nt = int(total_time / dt_recommend)
+    # 可视化几个时间点
+    time_indices = [0, nt//4, nt//2, nt]
 
-    print(f"\n计算成本估算:")
-    print(f"  模拟 {total_time} 秒需要 {nt} 步")
-    print(f"  每步计算约 {grid.nx * grid.nz * 10} 次操作")
-    print(f"  总计算量: ~{nt * grid.nx * grid.nz * 10:.1e} 次操作")
+    for i, idx in enumerate(time_indices):
+        print(f"Plotting t = {t_array[idx]:.4f}")
+        solver.plot_results(history, t_array, idx)
 
-    return dt_recommend
+        # 输出一些统计信息
+        u = history['u'][idx]
+        w = history['w'][idx]
+        T = history['T'][idx]
+
+        max_speed = np.max(np.sqrt(u**2 + w**2))
+        T_range = [np.min(T), np.max(T)]
+
+        print(f"  Max velocity: {max_speed:.4f}")
+        print(f"  Temperature range: [{T_range[0]:.3f}, {T_range[1]:.3f}]")
+        if idx > 0:
+            print(f"  Nusselt number: {diagnostics['Nu'][idx]:.3f}")
+        print()
+
+    # 绘制Nusselt数随时间变化
+    plt.figure(figsize=(10, 6))
+    plt.plot(diagnostics['time'], diagnostics['Nu'])
+    plt.xlabel('Time')
+    plt.ylabel('Nusselt Number')
+    plt.title('Heat Transfer Efficiency vs Time')
+    plt.grid(True)
+    plt.show()
+
+    return solver, history, t_array, diagnostics
 
 
 if __name__ == "__main__":
-    print("🚀 开始Boussinesq模型测试序列")
-
-    # 测试1：基础功能
-    grid, operators, u, w, T = simple_rayleigh_benard_test()
-
-    # 测试2：泊松求解器
-    poisson_ok = test_poisson_solver()
-
-    # 测试3：稳定性参数
-    dt_recommend = estimate_stability_parameters()
-
-    print("\n" + "=" * 60)
-    print("测试总结")
-    print("=" * 60)
-    print(f"基础功能: ✅ 完成")
-    print(f"泊松求解器: {'✅ 通过' if poisson_ok else '❌ 需要调试'}")
-    print(f"推荐时间步长: {dt_recommend:.2e}")
-
-    if poisson_ok:
-        print("\n🎉 准备就绪！可以运行完整的Boussinesq求解器了。")
-        print("下一步：运行 boussinesq_solver.py 开始真正的对流模拟！")
-    else:
-        print("\n⚠️  需要先修复泊松求解器再继续。")
+    solver, history, t_array, diagnostics = test_improved_rayleigh_benard()

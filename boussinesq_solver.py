@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 from grid import Grid2D
 from operators import FluidOperators, apply_velocity_bc, apply_pressure_bc, apply_temperature_bc
 from nums import ode
-from tqdm import tqdm
 
 
 class BoussinesqSolver:
@@ -417,7 +416,7 @@ def test_rayleigh_benard():
 
     # 设置时间步长
     dt = 3e-2
-    nt = 1000
+    nt = 500
 
     # 检查稳定性
     solver.check_stability(dt)
