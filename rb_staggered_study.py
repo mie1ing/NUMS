@@ -1,5 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
+import os
 from grid import Grid2D
 from operators import FluidOperators
 
@@ -170,71 +170,37 @@ def simulate_rb(Ra, n_steps=5000, grid=None, dt=None, Lx=2.0, Lz=1.0,
     return results
 
 
-def plot_velocity_field(u, w, grid, stride=1, ax=None, title=None):
-    """Plot velocity vectors on the pressure grid.
+def run_study(Ra_values=None, n_steps=5000, save_dir='rb_data'):
+    """Perform a systematic study over a range of Rayleigh numbers and save data."""
 
-    Parameters
-    ----------
-    u, w : ndarray
-        Velocity components on the staggered grid.
-    grid : Grid2D
-        Grid defining the domain and staggering.
-    stride : int, optional
-        Sub-sampling factor for the quiver plot.
-    ax : matplotlib axis, optional
-        Axis to plot on.  When ``None`` a new one is created.
-    title : str, optional
-        Title for the subplot.
-
-    Returns
-    -------
-    matplotlib axis with the quiver plot.
-    """
-    ops = FluidOperators(grid)
-    u_p, w_p = ops.interpolate_to_pressure_points(u, w)
-    x_p, z_p = grid.get_pressure_grid()
-    X, Z = np.meshgrid(x_p, z_p)
-
-    if ax is None:
-        _, ax = plt.subplots(figsize=(5, 4))
-
-    ax.quiver(
-        X[::stride, ::stride],
-        Z[::stride, ::stride],
-        u_p[::stride, ::stride],
-        w_p[::stride, ::stride],
-        scale_units='xy',
-        angles='xy',
-    )
-    ax.set_xlabel('x')
-    ax.set_ylabel('z')
-    ax.set_aspect('equal')
-    if title:
-        ax.set_title(title)
-    return ax
-
-
-def run_study(Ra_values=None, n_steps=5000):
-    """Perform a systematic study over a range of Rayleigh numbers."""
     if Ra_values is None:
         Ra_values = [1000, 2000, 5000, 10000]
 
+    os.makedirs(save_dir, exist_ok=True)
+
     study_results = []
-    fields = {}
-    histories = {}
-    grids = {}
-    dts = {}
-    vel_fields = {}
+
 
     for Ra in Ra_values:
         res = simulate_rb(Ra, n_steps=n_steps, verbose=True)
         study_results.append({'Ra': Ra, 'Nu': res['Nu'],
                               'max_vel': res['max_vel']})
-        fields[Ra] = res['T']
-        histories[Ra] = res['Nu_history']
-        grids[Ra] = res['grid']
-        dts[Ra] = res['dt']
-        vel_fields[Ra] = (res['u'], res['w'])
+
+        grid = res['grid']
+        np.savez_compressed(
+            os.path.join(save_dir, f'Ra_{int(Ra)}.npz'),
+            u=res['u'],
+            w=res['w'],
+            T=res['T'],
+            Nu_history=np.array(res['Nu_history']),
+            max_vel_history=np.array(res['max_vel_history']),
+            nx=grid.nx,
+            nz=grid.nz,
+            Lx=grid.Lx,
+            Lz=grid.Lz,
+            dt=res['dt'],
+        )
+
 
     # Estimate critical Rayleigh number
     critical = None
@@ -258,66 +224,12 @@ def run_study(Ra_values=None, n_steps=5000):
     else:
         slope = None
 
-    # Visualization: Nu-Ra relation
-    plt.figure(figsize=(6, 4))
-    Ra_arr = np.array([r['Ra'] for r in study_results])
-    Nu_arr = np.array([r['Nu'] for r in study_results])
-    plt.plot(Ra_arr, Nu_arr, 'o-', label='Simulation')
-    theory = 0.23 * (Ra_arr / 1000) ** 0.25
-    plt.plot(Ra_arr, theory, 'k--', label=r'Theory $\propto Ra^{0.25}$')
-    plt.xlabel('Rayleigh number')
-    plt.ylabel('Nusselt number')
-    plt.legend()
-    plt.title('Nu-Ra Relation')
-    plt.tight_layout()
-
-    # Temperature fields for selected Ra
-    sample_Ra = [min(Ra_arr), 2000, max(Ra_arr)]
-    sample_Ra = [Ra for Ra in sample_Ra if Ra in fields]
-    n_samples = len(sample_Ra)
-    fig, axes = plt.subplots(1, n_samples, figsize=(5 * n_samples, 4))
-    if n_samples == 1:
-        axes = [axes]
-    for ax, Ra in zip(axes, sample_Ra):
-        T = fields[Ra]
-        grid = grids[Ra]
-        x_p, z_p = grid.get_pressure_grid()
-        X, Z = np.meshgrid(x_p, z_p)
-        im = ax.contourf(X, Z, T, levels=20, cmap='RdBu_r')
-        ax.set_title(f'Ra={Ra}')
-        ax.set_aspect('equal')
-        plt.colorbar(im, ax=ax)
-    plt.suptitle('Temperature fields')
-    plt.tight_layout()
-
-    # Velocity fields for selected Ra
-    fig, axes = plt.subplots(1, n_samples, figsize=(5 * n_samples, 4))
-    if n_samples == 1:
-        axes = [axes]
-    for ax, Ra in zip(axes, sample_Ra):
-        u, w = vel_fields[Ra]
-        plot_velocity_field(u, w, grids[Ra], ax=ax, title=f'Ra={Ra}', stride=2)
-    plt.suptitle('Velocity fields')
-    plt.tight_layout()
-
-    # Convergence history for selected cases
-    fig, ax = plt.subplots(figsize=(6, 4))
-    for Ra in sample_Ra:
-        history = histories[Ra]
-        times = np.arange(len(history)) * 100 * dts[Ra]
-        ax.plot(times, history, label=f'Ra={Ra}')
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Nusselt number')
-    ax.legend()
-    ax.set_title('Convergence history')
-    plt.tight_layout()
 
     # Summary
     print("\nSummary:")
     for r in study_results:
         print(f"Ra={r['Ra']:5.0f} Nu={r['Nu']:.3f} max_vel={r['max_vel']:.3f}")
 
-    plt.show()
     return study_results
 
 
