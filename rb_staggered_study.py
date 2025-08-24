@@ -172,12 +172,14 @@ def simulate_rb(Ra, n_steps=5000, grid=None, dt=None, Lx=2.0, Lz=1.0,
 
 def run_study(Ra_values=None, n_steps=5000, save_dir='rb_data'):
     """Perform a systematic study over a range of Rayleigh numbers and save data."""
+
     if Ra_values is None:
         Ra_values = [1000, 2000, 5000, 10000]
 
     os.makedirs(save_dir, exist_ok=True)
 
     study_results = []
+
 
     for Ra in Ra_values:
         res = simulate_rb(Ra, n_steps=n_steps, verbose=True)
@@ -198,6 +200,7 @@ def run_study(Ra_values=None, n_steps=5000, save_dir='rb_data'):
             Lz=grid.Lz,
             dt=res['dt'],
         )
+
 
     # Estimate critical Rayleigh number
     critical = None
@@ -220,6 +223,7 @@ def run_study(Ra_values=None, n_steps=5000, save_dir='rb_data'):
         print(f"Nu ~ Ra^{slope:.2f} (theory 0.25)")
     else:
         slope = None
+
 
     # Summary
     print("\nSummary:")
