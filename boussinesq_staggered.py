@@ -55,10 +55,11 @@ def test_simple_rb_staggered_fixed():
 
     apply_bc(u, w, T)
 
-    def compute_Nu(T):
-        dT_dz_bottom = (T[1, :] - T[0, :]) / grid.dz
-        avg_gradient = np.mean(dT_dz_bottom)
-        return -L * avg_gradient / (T_hot - T_cold)
+    def compute_Nu(T, u, w):
+        dT_dz = operators.d_dz(T)
+        w_at_p = 0.5 * (w[:-1, :] + w[1:, :])
+        heat_flux = -kappa * dT_dz + w_at_p * T
+        return L * np.mean(heat_flux) / (kappa * (T_hot - T_cold))
 
     def solve_poisson_simple(rhs, max_iter=200):
         phi = np.zeros_like(rhs)
@@ -81,11 +82,11 @@ def test_simple_rb_staggered_fixed():
                 break
         return phi
 
-    Nu_initial = compute_Nu(T)
+    Nu_initial = compute_Nu(T, u, w)
     print(f"Initial Nu = {Nu_initial:.4f}")
 
-    dt = 5e-5
-    n_steps = 1000
+    dt = 1e-3
+    n_steps = 10000
     print(f"Running {n_steps} time steps with dt = {dt:.1e}...")
 
     Nu_history = [Nu_initial]
@@ -145,7 +146,7 @@ def test_simple_rb_staggered_fixed():
         apply_bc(u, w, T)
 
         if (step + 1) % 100 == 0:
-            Nu_current = compute_Nu(T)
+            Nu_current = compute_Nu(T, u, w)
             u_p, w_p = operators.interpolate_to_pressure_points(u, w)
             max_vel = np.sqrt(np.max(u_p ** 2 + w_p ** 2))
             max_div = np.max(np.abs(operators.divergence(u, w)))
