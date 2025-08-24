@@ -94,6 +94,7 @@ def test_simple_rb_staggered_fixed():
     for step in range(n_steps):
         T_ref = (T_hot + T_cold) / 2
         T_w = 0.5 * (T[:-1, :] + T[1:, :])
+
         buoyancy = np.zeros_like(w)
         buoyancy[1:-1, :] = g * alpha * (T_w - T_ref)
 
