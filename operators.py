@@ -159,40 +159,7 @@ class FluidOperators:
         return fdm.pd2_2d(f, axis=0, h=self.dz, method='centered', bc='non-periodic')
 
 
-# boundary condition handling functions
-# def apply_velocity_bc(u, w, grid, bc_type='no_slip'):
-#     """
-#     apply velocity boundary conditions
-#
-#     parameters:
-#         u, w: velocity field
-#         grid: Grid2D object
-#         bc_type: boundary condition type ('no_slip', 'free_slip', 'periodic')
-#     """
-#     if bc_type == 'no_slip':
-#         if grid.staggered:
-#             # no slip boundary condition for staggered grids
-#             # bottom and top boundary (z=0, z=Lz)
-#             u[0, :] = 0  # bottom boundary u=0
-#             u[-1, :] = 0  # top boundary u=0
-#             w[0, :] = 0  # bottom boundary w=0
-#             w[-1, :] = 0  # top boundary w=0
-#
-#             # left and right boundaty can be periodic or no slip
-#             # here assume left and right are periodic, so no setting
-#         else:
-#             # boundary condition for non-staggered grids
-#             u[0, :] = 0  # bottom boundary
-#             u[-1, :] = 0  # top boundary
-#             u[:, 0] = 0  # left boundary
-#             u[:, -1] = 0  # right boundary
-#
-#             w[0, :] = 0  # bottom boundary
-#             w[-1, :] = 0  # top boundary
-#             w[:, 0] = 0  # left boundary
-#             w[:, -1] = 0  # right boundary
-
-
+# Boundary condition handling functions
 def apply_temperature_bc(T, T_hot=1.0, T_cold=0.0):
     """
     apply temperature boundary conditions
@@ -297,59 +264,3 @@ def apply_pressure_bc(p, bc_params=None):
         if bc_params['type'] == 'channel' and 'pressure_outlet' in bc_params:
             # outslet specified pressure
             p[:, -1] = bc_params['pressure_outlet']
-
-
-def create_test_operators():
-    """
-    测试边界条件函数
-    """
-    print("Testing boundary condition functions...")
-
-    from grid import Grid2D
-    import numpy as np
-
-    # 创建测试网格
-    grid = Grid2D(nx=5, nz=5, Lx=1.0, Lz=1.0, staggered=False)
-
-    # 测试速度边界条件
-    u = np.ones((6, 6))
-    w = np.ones((6, 6))
-
-    # 方腔流测试
-    bc_params = {
-        'type': 'cavity',
-        'u_top': 2.0,
-        'u_bottom': 0.0,
-        'u_left': 0.0,
-        'u_right': 0.0
-    }
-
-    print("Before applying velocity BC:")
-    print(f"u top: {u[-1, :]}")
-    print(f"u bottom: {u[0, :]}")
-
-    apply_velocity_bc(u, w, bc_params)
-
-    print("After applying velocity BC:")
-    print(f"u top: {u[-1, :]}")
-    print(f"u bottom: {u[0, :]}")
-    print(f"w walls: {w[:, 0]}")
-
-    # 测试压力边界条件
-    p = np.random.random((6, 6))
-    print(f"\nBefore pressure BC:")
-    print(f"p[0, :] = {p[0, :]}")
-    print(f"p[1, :] = {p[1, :]}")
-
-    apply_pressure_bc(p)
-
-    print(f"After pressure BC:")
-    print(f"p[0, :] = {p[0, :]}")
-    print(f"p[1, :] = {p[1, :]}")
-    print(f"Equal? {np.allclose(p[0, :], p[1, :])}")
-
-    print("Boundary condition tests completed!")
-
-
-if __name__ == "__main__":
-    create_test_operators()
