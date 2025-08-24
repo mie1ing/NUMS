@@ -21,7 +21,7 @@ def simulate_rb(Ra, n_steps=5000, grid=None, dt=None, Lx=2.0, Lz=1.0,
     Lx, Lz : float
         Domain size.
     verbose : bool
-        When True print progress information every 100 steps.
+        When True print progress information every 1000 steps.
 
     Returns
     -------
@@ -144,7 +144,7 @@ def simulate_rb(Ra, n_steps=5000, grid=None, dt=None, Lx=2.0, Lz=1.0,
         T = T + dt * (-temp_conv + temp_diff)
         apply_bc(u, w, T)
 
-        if (step + 1) % 100 == 0:
+        if (step + 1) % 1000 == 0:
             Nu_current = compute_Nu(T, u, w)
             u_p, w_p = ops.interpolate_to_pressure_points(u, w)
             max_vel = np.sqrt(np.max(u_p ** 2 + w_p ** 2))
@@ -173,7 +173,7 @@ def simulate_rb(Ra, n_steps=5000, grid=None, dt=None, Lx=2.0, Lz=1.0,
 def run_study(Ra_values=None, n_steps=5000):
     """Perform a systematic study over a range of Rayleigh numbers."""
     if Ra_values is None:
-        Ra_values = np.arange(1000, 21000, 1000)
+        Ra_values = [1000, 2000, 5000, 10000]
 
     study_results = []
     fields = {}
