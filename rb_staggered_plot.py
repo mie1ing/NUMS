@@ -64,9 +64,9 @@ def plot_saved_case(filename, stride=2):
 
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='Plot saved RB simulation data')
-    parser.add_argument('file', help='npz file produced by run_study')
-    parser.add_argument('--stride', type=int, default=2, help='quiver stride')
-    args = parser.parse_args()
-    plot_saved_case(args.file, stride=args.stride)
+    # import argparse
+    # parser = argparse.ArgumentParser(description='Plot saved RB simulation data')
+    # parser.add_argument('file', help='npz file produced by run_study')
+    # parser.add_argument('--stride', type=int, default=2, help='quiver stride')
+    # args = parser.parse_args()
+    plot_saved_case('rb_data/Ra_1000.npz', stride=3)

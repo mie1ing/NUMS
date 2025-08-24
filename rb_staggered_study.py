@@ -200,6 +200,7 @@ def run_study(Ra_values=None, n_steps=5000, save_dir='rb_data'):
             Lz=grid.Lz,
             dt=res['dt'],
         )
+        print(f'Ra={Ra} saved to {save_dir}.')
 
 
     # Estimate critical Rayleigh number
