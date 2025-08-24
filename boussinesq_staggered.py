@@ -158,26 +158,22 @@ def test_basic_staggered_operations():
         ax = axes[1, 1]
         ax.axis('off')
 
-        summary_text = f"""
-        STAGGERED GRID TEST RESULTS
-
-        Grid Size: {grid.nx} × {grid.nz}
-        Domain: {grid.Lx} × {grid.Lz}
-
-        Field Dimensions:
-        • Temperature: {T.shape}
-        • U-velocity: {u.shape}  
-        • W-velocity: {w.shape}
-
-        Operator Tests:
-        • Divergence: ✅
-        • Gradient: ✅
-        • Laplacian: ✅
-        • Interpolation: ✅
-
-        Max Divergence: {np.max(np.abs(div_u)):.2e}
-        (Should be ~0 for zero velocity)
-        """
+        summary_text = (
+            "STAGGERED GRID TEST RESULTS\n\n"
+            f"Grid Size: {grid.nx} × {grid.nz}\n"
+            f"Domain: {grid.Lx} × {grid.Lz}\n\n"
+            "Field Dimensions:\n"
+            f"- Temperature: {T.shape}\n"
+            f"- U-velocity: {u.shape}\n"
+            f"- W-velocity: {w.shape}\n\n"
+            "Operator Tests:\n"
+            "- Divergence: OK\n"
+            "- Gradient: OK\n"
+            "- Laplacian: OK\n"
+            "- Interpolation: OK\n\n"
+            f"Max Divergence: {np.max(np.abs(div_u)):.2e}\n"
+            "(Should be ~0 for zero velocity)"
+        )
 
         ax.text(0.1, 0.5, summary_text, fontsize=10, verticalalignment='center',
                 family='monospace')
@@ -295,9 +291,13 @@ def test_simple_rb_staggered_fixed():
         dw_dz = operators.d_dz(w)
 
         w_on_u = np.zeros_like(u)
-        w_on_u[:, 1:-1] = 0.5 * (w[:-1, 1:-1] + w[1:, 1:-1])
+        w_on_u[:, 1:-1] = 0.25 * (
+            w[:-1, :-1] + w[1:, :-1] + w[:-1, 1:] + w[1:, 1:]
+        )
         u_on_w = np.zeros_like(w)
-        u_on_w[1:-1, :] = 0.5 * (u[1:-1, :-1] + u[1:-1, 1:])
+        u_on_w[1:-1, :] = 0.25 * (
+            u[:-1, :-1] + u[:-1, 1:] + u[1:, :-1] + u[1:, 1:]
+        )
 
         conv_u = u * du_dx + w_on_u * du_dz
         conv_w = u_on_w * dw_dx + w * dw_dz
