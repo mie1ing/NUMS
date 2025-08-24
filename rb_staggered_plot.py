@@ -54,12 +54,8 @@ def load_case(filename: str) -> CaseData:
     Nu_history = data["Nu_history"]
     dt = float(data["dt"])
 
-    # Attempt to obtain Ra value from file if stored, otherwise parse from name
-    if "Ra" in data:
-        Ra = float(data["Ra"])
-    else:
-        match = re.search(r"Ra_(\d+)", filename)
-        Ra = float(match.group(1)) if match else float("nan")
+    match = re.search(r"Ra_(\d+)", filename)
+    Ra = float(match.group(1)) if match else float("nan")
 
     return CaseData(Ra=Ra, grid=grid, u=u, w=w, T=T, Nu_history=Nu_history, dt=dt)
 
@@ -124,6 +120,7 @@ def plot_cases(file_pattern: str = "rb_data/Ra_*.npz", stride: int = 2) -> None:
         plot_temperature_field(case, ax=ax)
     fig_T.suptitle("Temperature Fields")
     plt.tight_layout()
+    plt.savefig("plots/rb_staggered_T.png")
 
     # --- Velocity fields ---
     fig_V, axes_V = plt.subplots(2, 2, figsize=(10, 8))
@@ -131,6 +128,7 @@ def plot_cases(file_pattern: str = "rb_data/Ra_*.npz", stride: int = 2) -> None:
         plot_velocity_field(case, stride=stride, ax=ax)
     fig_V.suptitle("Velocity Fields")
     plt.tight_layout()
+    plt.savefig("plots/rb_staggered_V.png")
 
     # --- Convergence history ---
     fig_conv, ax_conv = plt.subplots(figsize=(6, 4))
@@ -142,6 +140,7 @@ def plot_cases(file_pattern: str = "rb_data/Ra_*.npz", stride: int = 2) -> None:
     ax_conv.set_title("Convergence Histories")
     ax_conv.legend()
     ax_conv.grid(True)
+    plt.savefig("plots/rb_staggered_conv.png")
 
     # --- Nu-Ra relation ---
     fig_NR, ax_NR = plt.subplots(figsize=(6, 4))
@@ -161,6 +160,7 @@ def plot_cases(file_pattern: str = "rb_data/Ra_*.npz", stride: int = 2) -> None:
     ax_NR.set_title("Nu-Ra Relation")
     ax_NR.legend()
     ax_NR.grid(True, which="both")
+    plt.savefig("plots/rb_staggered_NR.png")
 
     plt.show()
 

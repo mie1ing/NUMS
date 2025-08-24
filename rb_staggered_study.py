@@ -203,17 +203,6 @@ def run_study(Ra_values=None, n_steps=5000, save_dir='rb_data'):
         print(f'Ra={Ra} saved to {save_dir}.')
 
 
-    # Estimate critical Rayleigh number
-    critical = None
-    for item in study_results:
-        if item['Nu'] > 1.1 and item['max_vel'] > 0.01:
-            critical = item['Ra']
-            break
-    if critical is not None:
-        print(f"Estimated critical Ra ≈ {critical} (theory ≈ 1708)")
-    else:
-        print("No convection observed; increase Ra or n_steps.")
-
     # Check Nu ~ Ra^0.25 scaling
     supercrit = [r for r in study_results if r['Ra'] > 1708]
     if len(supercrit) > 1:
