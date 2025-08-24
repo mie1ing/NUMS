@@ -145,7 +145,7 @@ def test_simple_rb_staggered_fixed():
         u, w, T = u_new.copy(), w_new.copy(), T_new.copy()
         apply_bc(u, w, T)
 
-        if (step + 1) % 100 == 0:
+        if (step + 1) % 1000 == 0:
             Nu_current = compute_Nu(T, u, w)
             u_p, w_p = operators.interpolate_to_pressure_points(u, w)
             max_vel = np.sqrt(np.max(u_p ** 2 + w_p ** 2))
