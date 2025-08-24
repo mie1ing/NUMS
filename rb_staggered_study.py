@@ -202,19 +202,6 @@ def run_study(Ra_values=None, n_steps=5000, save_dir='rb_data'):
         )
         print(f'Ra={Ra} saved to {save_dir}.')
 
-
-    # Check Nu ~ Ra^0.25 scaling
-    supercrit = [r for r in study_results if r['Ra'] > 1708]
-    if len(supercrit) > 1:
-        Ra_arr = np.array([r['Ra'] for r in supercrit])
-        Nu_arr = np.array([r['Nu'] for r in supercrit])
-        coeff = np.polyfit(np.log(Ra_arr), np.log(Nu_arr), 1)
-        slope = coeff[0]
-        print(f"Nu ~ Ra^{slope:.2f} (theory 0.25)")
-    else:
-        slope = None
-
-
     # Summary
     print("\nSummary:")
     for r in study_results:

@@ -68,7 +68,6 @@ class FluidOperators:
             grad_x = np.zeros((nz + 1, nx + 2))
             # inner points: standard centered difference
             grad_x[:, 1:-1] = (p[:, 1:] - p[:, :-1]) / self.dx
-            # 边界点：外推或边界条件
             # boundary points: extrapolation or boundary condition
             grad_x[:, 0] = (p[:, 0] - p[:, 0]) / self.dx  # left boundary, normally 0
             grad_x[:, -1] = (p[:, -1] - p[:, -1]) / self.dx  # rights boundary, normally 0
@@ -134,28 +133,28 @@ class FluidOperators:
             u_p, w_p: velocity components interpolated to pressure points
         """
         if self.staggered:
-            # u速度插值到压力点
+            # Interpolate u velocity to pressure points
             u_p = 0.5 * (u[:, :-1] + u[:, 1:])
-            # w速度插值到压力点
+            # Interpolate w velocity to pressure points
             w_p = 0.5 * (w[:-1, :] + w[1:, :])
             return u_p, w_p
         else:
             return u, w
 
     def d_dx(self, f):
-        """计算x方向一阶导数"""
+        """First-order derivative in the x-direction"""
         return fdm.pd1_2d(f, axis=1, h=self.dx, method='centered', bc='non-periodic')
 
     def d_dz(self, f):
-        """计算z方向一阶导数"""
+        """First-order derivative in the z-direction"""
         return fdm.pd1_2d(f, axis=0, h=self.dz, method='centered', bc='non-periodic')
 
     def d2_dx2(self, f):
-        """计算x方向二阶导数"""
+        """Second-order derivative in the x-direction"""
         return fdm.pd2_2d(f, axis=1, h=self.dx, method='centered', bc='non-periodic')
 
     def d2_dz2(self, f):
-        """计算z方向二阶导数"""
+        """Second-order derivative in the z-direction"""
         return fdm.pd2_2d(f, axis=0, h=self.dz, method='centered', bc='non-periodic')
 
 
