@@ -170,6 +170,50 @@ def simulate_rb(Ra, n_steps=5000, grid=None, dt=None, Lx=2.0, Lz=1.0,
     return results
 
 
+def plot_velocity_field(u, w, grid, stride=1, ax=None, title=None):
+    """Plot velocity vectors on the pressure grid.
+
+    Parameters
+    ----------
+    u, w : ndarray
+        Velocity components on the staggered grid.
+    grid : Grid2D
+        Grid defining the domain and staggering.
+    stride : int, optional
+        Sub-sampling factor for the quiver plot.
+    ax : matplotlib axis, optional
+        Axis to plot on.  When ``None`` a new one is created.
+    title : str, optional
+        Title for the subplot.
+
+    Returns
+    -------
+    matplotlib axis with the quiver plot.
+    """
+    ops = FluidOperators(grid)
+    u_p, w_p = ops.interpolate_to_pressure_points(u, w)
+    x_p, z_p = grid.get_pressure_grid()
+    X, Z = np.meshgrid(x_p, z_p)
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5, 4))
+
+    ax.quiver(
+        X[::stride, ::stride],
+        Z[::stride, ::stride],
+        u_p[::stride, ::stride],
+        w_p[::stride, ::stride],
+        scale_units='xy',
+        angles='xy',
+    )
+    ax.set_xlabel('x')
+    ax.set_ylabel('z')
+    ax.set_aspect('equal')
+    if title:
+        ax.set_title(title)
+    return ax
+
+
 def run_study(Ra_values=None, n_steps=5000):
     """Perform a systematic study over a range of Rayleigh numbers."""
     if Ra_values is None:
@@ -180,6 +224,7 @@ def run_study(Ra_values=None, n_steps=5000):
     histories = {}
     grids = {}
     dts = {}
+    vel_fields = {}
 
     for Ra in Ra_values:
         res = simulate_rb(Ra, n_steps=n_steps, verbose=True)
@@ -189,6 +234,7 @@ def run_study(Ra_values=None, n_steps=5000):
         histories[Ra] = res['Nu_history']
         grids[Ra] = res['grid']
         dts[Ra] = res['dt']
+        vel_fields[Ra] = (res['u'], res['w'])
 
     # Estimate critical Rayleigh number
     critical = None
@@ -242,6 +288,16 @@ def run_study(Ra_values=None, n_steps=5000):
         ax.set_aspect('equal')
         plt.colorbar(im, ax=ax)
     plt.suptitle('Temperature fields')
+    plt.tight_layout()
+
+    # Velocity fields for selected Ra
+    fig, axes = plt.subplots(1, n_samples, figsize=(5 * n_samples, 4))
+    if n_samples == 1:
+        axes = [axes]
+    for ax, Ra in zip(axes, sample_Ra):
+        u, w = vel_fields[Ra]
+        plot_velocity_field(u, w, grids[Ra], ax=ax, title=f'Ra={Ra}', stride=2)
+    plt.suptitle('Velocity fields')
     plt.tight_layout()
 
     # Convergence history for selected cases
